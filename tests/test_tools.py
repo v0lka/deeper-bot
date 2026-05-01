@@ -516,7 +516,7 @@ class TestWebFetchSummarization:
         assert "Access denied" in result
 
     async def test_timeout_returns_error_message(self):
-        """httpx timeout should return a user-friendly error."""
+        """Httpx timeout should return a user-friendly error."""
         import httpx
 
         from deeper_bot.tools import _web_fetch

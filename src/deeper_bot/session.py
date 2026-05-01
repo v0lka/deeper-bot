@@ -1,3 +1,5 @@
+"""Session dataclass (state machine) and SessionStore (SQLite + in-memory cache with eviction)."""
+
 import asyncio
 import json
 import logging
@@ -15,6 +17,8 @@ SUMMARY_PREFIX = "[Summary of previous conversation]\n\n"
 
 
 class SessionState(StrEnum):
+    """Possible states of a research session."""
+
     IDLE = "idle"
     RESEARCHING = "researching"
     AWAITING_ANSWER = "awaiting_answer"
@@ -22,6 +26,8 @@ class SessionState(StrEnum):
 
 @dataclass
 class Session:
+    """Per-chat session holding conversation history, state, and metadata."""
+
     chat_id: int
     state: SessionState = SessionState.IDLE
     messages: list[dict] = field(default_factory=list)
@@ -34,20 +40,24 @@ class Session:
     last_accessed: float = field(default_factory=monotonic, repr=False)
 
     def clear_status(self) -> None:
+        """Clear the TODO list and reset status announcement flag."""
         self.todo_list = None
         self._status_announced = False
 
     def set_awaiting_answer(self, future: asyncio.Future) -> None:
+        """Store the future and transition to AWAITING_ANSWER state."""
         self._pending_future = future
         self.state = SessionState.AWAITING_ANSWER
 
     def resolve_answer(self, text: str) -> None:
+        """Resolve the pending future with the user's answer and transition to RESEARCHING."""
         if self._pending_future and not self._pending_future.done():
             self._pending_future.set_result(text)
         self._pending_future = None
         self.state = SessionState.RESEARCHING
 
     def has_pending_question(self) -> bool:
+        """Return True if the session is waiting for a user answer."""
         return (
             self.state == SessionState.AWAITING_ANSWER
             and self._pending_future is not None
@@ -55,20 +65,25 @@ class Session:
         )
 
     def cancel_pending(self) -> None:
+        """Cancel the pending future and clear it."""
         if self._pending_future and not self._pending_future.done():
             self._pending_future.cancel()
         self._pending_future = None
 
     def timeout_pending(self) -> None:
+        """Clear the pending future and transition back to RESEARCHING on timeout."""
         self._pending_future = None
         self.state = SessionState.RESEARCHING
 
 
 class SessionStore:
+    """SQLite-backed session storage with in-memory LRU cache and eviction."""
+
     _MAX_CACHED = 1000
     _EVICTION_TTL = 3600  # seconds
 
     def __init__(self, database_path: str) -> None:
+        """Initialize with the path to the SQLite database file."""
         self._db_path = database_path
         self._sessions: dict[int, Session] = {}
         self._db: aiosqlite.Connection | None = None
@@ -109,6 +124,7 @@ class SessionStore:
                 self._get_locks.pop(cid, None)
 
     async def init(self) -> None:
+        """Create the database and schema, and reset non-idle sessions to idle."""
         Path(self._db_path).parent.mkdir(parents=True, exist_ok=True)
         self._db = await aiosqlite.connect(self._db_path)
         await self._db.execute("PRAGMA journal_mode=WAL")
@@ -140,11 +156,13 @@ class SessionStore:
         logger.info("Session store initialized: %s", self._db_path)
 
     async def close(self) -> None:
+        """Close the database connection."""
         if self._db:
             await self._db.close()
             self._db = None
 
     async def get_or_create(self, chat_id: int) -> Session:
+        """Retrieve an existing session from cache or DB, or create a new one."""
         self._evict_stale()
         async with self._get_lock(chat_id):
             if chat_id in self._sessions:
@@ -176,6 +194,7 @@ class SessionStore:
             return session
 
     async def save(self, session: Session) -> None:
+        """Persist the session to the database and update cache."""
         if self._db is None:
             raise RuntimeError("SessionStore not initialized — call init() first")
         session.last_accessed = monotonic()
@@ -206,6 +225,7 @@ class SessionStore:
         await self._db.commit()
 
     async def delete(self, chat_id: int) -> None:
+        """Remove the session from cache and database."""
         if self._db is None:
             raise RuntimeError("SessionStore not initialized — call init() first")
         self._sessions.pop(chat_id, None)

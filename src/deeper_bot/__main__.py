@@ -1,3 +1,5 @@
+"""Application entry point for Deeper Bot."""
+
 import asyncio
 import logging
 import sys
@@ -13,6 +15,7 @@ from deeper_bot.tools import close_http_client
 
 
 async def main() -> None:
+    """Initialize and start the Telegram bot."""
     logging.basicConfig(level=logging.INFO, stream=sys.stdout, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
     settings = get_settings()

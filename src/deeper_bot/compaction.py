@@ -1,3 +1,5 @@
+"""Context compaction: summarize old conversation turns to free up context window."""
+
 import logging
 
 from deeper_bot.config import Settings

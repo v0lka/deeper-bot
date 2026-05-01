@@ -1,3 +1,5 @@
+"""Pydantic Settings with env var / .env loading, validation, and API key resolution."""
+
 import os
 from functools import lru_cache
 
@@ -6,6 +8,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
+    """Application configuration loaded from environment variables and .env file."""
+
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
     bot_token: str
@@ -24,6 +28,7 @@ class Settings(BaseSettings):
     @field_validator("bot_token", mode="after")
     @classmethod
     def validate_bot_token(cls, v: str) -> str:
+        """Ensure bot_token is not empty after stripping whitespace."""
         if not v.strip():
             raise ValueError("BOT_TOKEN must be set — get one from @BotFather on Telegram")
         return v
@@ -31,6 +36,7 @@ class Settings(BaseSettings):
     @field_validator("allowed_users", mode="before")
     @classmethod
     def parse_allowed_users(cls, v: object) -> list[int]:
+        """Parse comma-separated user IDs into a list of integers."""
         if isinstance(v, str):
             if not v.strip():
                 return []
@@ -39,6 +45,7 @@ class Settings(BaseSettings):
 
     @property
     def resolved_llm_api_key(self) -> str:
+        """Resolve the LLM API key, expanding ${ENV_VAR} references."""
         key = self.llm_api_key
         if key.startswith("${") and key.endswith("}"):
             env_var = key[2:-1]
@@ -50,10 +57,12 @@ class Settings(BaseSettings):
 
     @property
     def resolved_utility_model(self) -> str:
+        """Return the utility model name, falling back to the primary model."""
         return self.llm_utility_model or self.llm_model
 
 
 @lru_cache
 def get_settings() -> Settings:
+    """Return cached Settings instance."""
     # BaseSettings populates fields from env vars / .env automatically.
     return Settings()  # type: ignore[call-arg]

@@ -1,3 +1,5 @@
+"""ReAct agent loop with typing indicators, error handling, and context compaction."""
+
 import asyncio
 import contextlib
 import logging

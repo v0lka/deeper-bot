@@ -1,3 +1,5 @@
+"""File-to-markdown conversion: markitdown for office docs, code blocks for code files, plain text."""
+
 import asyncio
 import logging
 from pathlib import Path

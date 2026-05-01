@@ -139,7 +139,11 @@ class TestCompactContext:
         assert session.research_start_idx == 1
 
     async def test_double_compact_removes_summary(self, settings):
-        """After compacting raw messages into a summary, a second compact with no new raw messages should remove the summary."""
+        """A second compact with no new raw messages should remove the previous summary.
+
+        After compacting raw messages into a summary, a second compact with no new raw
+        messages should remove the summary.
+        """
         session = Session(chat_id=1)
         session.messages = [
             {"role": "system", "content": "sys"},

@@ -1,3 +1,5 @@
+"""LLM client wrapper with retry logic for transient errors."""
+
 import asyncio
 import logging
 

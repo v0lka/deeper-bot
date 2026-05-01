@@ -265,6 +265,7 @@ class TestTelegramForbiddenHandling:
     async def test_keep_typing_handles_telegram_forbidden(self):
         """_keep_typing should stop gracefully when bot is blocked."""
         from aiogram.exceptions import TelegramForbiddenError
+
         from deeper_bot.agent import _keep_typing
 
         bot = AsyncMock()

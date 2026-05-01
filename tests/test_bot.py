@@ -608,9 +608,8 @@ class TestMediaGroupHandling:
         async def fake_extract(msg, bot):
             return msg.caption, f"content of {msg.document.file_name}", msg.document.file_name
 
-        with patch("deeper_bot.bot._extract_content", side_effect=fake_extract):
-            with patch("asyncio.sleep"):
-                await _process_media_group(42, "mg1", bot, store, settings)
+        with patch("deeper_bot.bot._extract_content", side_effect=fake_extract), patch("asyncio.sleep"):
+            await _process_media_group(42, "mg1", bot, store, settings)
 
         # An agent task should have been registered
         assert 42 in _active_tasks
@@ -646,9 +645,8 @@ class TestMediaGroupHandling:
         async def fake_extract(msg, bot):
             return "", f"content of {msg.document.file_name}", msg.document.file_name
 
-        with patch("deeper_bot.bot._extract_content", side_effect=fake_extract):
-            with patch("asyncio.sleep"):
-                await _process_media_group(42, "mg2", bot, store, settings)
+        with patch("deeper_bot.bot._extract_content", side_effect=fake_extract), patch("asyncio.sleep"):
+            await _process_media_group(42, "mg2", bot, store, settings)
 
         # No agent should have been started
         assert 42 not in _active_tasks
@@ -679,9 +677,8 @@ class TestMediaGroupHandling:
                 raise UnsupportedFileError("Unsupported file: bad.xyz")
             return msg.caption, f"content of {msg.document.file_name}", msg.document.file_name
 
-        with patch("deeper_bot.bot._extract_content", side_effect=fake_extract):
-            with patch("asyncio.sleep"):
-                await _process_media_group(42, "mg3", bot, store, settings)
+        with patch("deeper_bot.bot._extract_content", side_effect=fake_extract), patch("asyncio.sleep"):
+            await _process_media_group(42, "mg3", bot, store, settings)
 
         # An agent task should have been registered
         assert 42 in _active_tasks

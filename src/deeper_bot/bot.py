@@ -1,3 +1,5 @@
+"""Telegram handlers, middleware, and message routing for Deeper Bot."""
+
 import asyncio
 import logging
 from typing import Any
@@ -225,7 +227,10 @@ async def _process_media_group(
 
 
 class WhitelistMiddleware(BaseMiddleware):
+    """Middleware that drops messages from users not in the allow-list."""
+
     def __init__(self, allowed_users: list[int]) -> None:
+        """Initialize with a list of allowed Telegram user IDs."""
         self._allowed = set(allowed_users)
 
     async def __call__(
@@ -234,6 +239,7 @@ class WhitelistMiddleware(BaseMiddleware):
         event: TelegramObject,
         data: dict[str, Any],
     ) -> Any:
+        """Drop the event if the sender is not whitelisted."""
         if isinstance(event, Message) and event.from_user and event.from_user.id not in self._allowed:
             logger.debug("Ignoring message from non-whitelisted user %s", event.from_user.id)
             return None
@@ -246,6 +252,7 @@ class WhitelistMiddleware(BaseMiddleware):
 
 
 def create_router() -> Router:
+    """Create and configure the aiogram Router with all handlers."""
     router = Router(name="deeper_bot")
 
     @router.message(Command("clear"))
@@ -358,6 +365,7 @@ def create_router() -> Router:
 
 
 async def on_startup(bot: Bot) -> None:
+    """Register bot commands on startup."""
     await bot.set_my_commands(
         [
             BotCommand(command="clear", description="Clear context"),
