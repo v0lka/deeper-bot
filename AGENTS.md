@@ -248,17 +248,18 @@ uv run pytest --cov=src/deeper_bot --cov-report=term-missing
 
 Environment variables (loaded from `.env`):
 
-| Variable               | Required | Default            | Notes                                |
-| ---------------------- | -------- | ------------------ | ------------------------------------ |
-| `BOT_TOKEN`            | Yes      | —                  | From @BotFather                      |
-| `LLM_BASE_URL`         | Yes      | —                  | OpenAI-compatible endpoint           |
-| `LLM_MODEL`            | Yes      | —                  | Primary model identifier             |
-| `LLM_API_KEY`          | Yes      | —                  | Direct key or `${ENV_VAR}` reference |
-| `LLM_USE_REASONING`    | No       | `true`             | Enable reasoning_effort param        |
-| `LLM_REASONING_EFFORT` | No       | `high`             | low/medium/high                      |
-| `LLM_UTILITY_MODEL`    | No       | `LLM_MODEL`        | Cheaper model for summarization      |
-| `ALLOWED_USERS`        | No       | `[]`               | Comma-separated Telegram user IDs    |
-| `DATABASE_PATH`        | No       | `data/sessions.db` | SQLite file path                     |
+| Variable               | Required | Default                    | Notes                                                |
+| ---------------------- | -------- | -------------------------- | ---------------------------------------------------- |
+| `BOT_TOKEN`            | Yes      | —                          | From @BotFather                                      |
+| `TELEGRAM_API_URL`     | No       | `https://api.telegram.org` | Use `http://localhost:8081` for local Bot API server |
+| `LLM_BASE_URL`         | Yes      | —                          | OpenAI-compatible endpoint                           |
+| `LLM_MODEL`            | Yes      | —                          | Primary model identifier                             |
+| `LLM_API_KEY`          | Yes      | —                          | Direct key or `${ENV_VAR}` reference                 |
+| `LLM_USE_REASONING`    | No       | `true`                     | Enable reasoning_effort param                        |
+| `LLM_REASONING_EFFORT` | No       | `high`                     | low/medium/high                                      |
+| `LLM_UTILITY_MODEL`    | No       | `LLM_MODEL`                | Cheaper model for summarization                      |
+| `ALLOWED_USERS`        | No       | `[]`                       | Comma-separated Telegram user IDs                    |
+| `DATABASE_PATH`        | No       | `data/sessions.db`         | SQLite file path                                     |
 
 ## Entry Points
 

@@ -133,7 +133,8 @@ uv run ruff format .
    ```bash
    git clone <repository-url> /opt/deeper-bot
    cd /opt/deeper-bot
-   uv sync --all-extras --no-dev
+   sudo -u deeperbot HOME=/opt/deeper-bot uv sync --all-extras --no-dev
+   sudo chown -R deeperbot:deeperbot /opt/deeper-bot
    ```
 
 3. **Create the environment file**
@@ -144,11 +145,14 @@ uv run ruff format .
 
    Paste and edit your production configuration (see Local Development section for reference).
 
-4. **Create the database directory**
+4. **Create required directories**
 
    ```bash
    sudo mkdir -p /opt/deeper-bot/data
    sudo chown deeperbot:deeperbot /opt/deeper-bot/data
+
+   sudo mkdir -p /opt/deeper-bot/.cache
+   sudo chown deeperbot:deeperbot /opt/deeper-bot/.cache
    ```
 
 5. **Create a systemd service**
@@ -168,6 +172,8 @@ uv run ruff format .
    Group=deeperbot
    WorkingDirectory=/opt/deeper-bot
    Environment="PYTHONUNBUFFERED=1"
+   Environment="HOME=/opt/deeper-bot"
+   Environment="UV_CACHE_DIR=/opt/deeper-bot/.cache"
    EnvironmentFile=/opt/deeper-bot/.env
    ExecStart=/usr/local/bin/uv run -m deeper_bot
    Restart=on-failure
@@ -242,6 +248,48 @@ services:
 ```bash
 docker compose up -d
 docker compose logs -f
+```
+
+## Removing the Bot from Server
+
+### Systemd Service
+
+```bash
+# Stop and disable the service
+sudo systemctl stop deeper-bot
+sudo systemctl disable deeper-bot
+
+# Remove the service file
+sudo rm /etc/systemd/system/deeper-bot.service
+sudo systemctl daemon-reload
+
+# Remove user and project directory (optional)
+sudo userdel deeperbot
+sudo rm -rf /opt/deeper-bot
+```
+
+### Docker
+
+```bash
+# Stop and remove the container
+docker stop deeper-bot
+docker rm deeper-bot
+
+# Remove the image (optional)
+docker rmi deeper-bot
+
+# Remove data volume (optional)
+docker volume prune
+```
+
+### Docker Compose
+
+```bash
+# Stop and remove containers
+docker compose down
+
+# Remove images and volumes (optional)
+docker compose down --volumes --rmi all
 ```
 
 ## Bot Commands

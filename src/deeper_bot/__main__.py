@@ -20,7 +20,11 @@ async def main() -> None:
     store = SessionStore(settings.database_path)
     await store.init()
 
-    bot = Bot(token=settings.bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+    bot = Bot(
+        token=settings.bot_token,
+        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+        base_url=settings.telegram_api_url,
+    )
     dp = Dispatcher()
 
     dp["session_store"] = store

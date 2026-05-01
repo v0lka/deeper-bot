@@ -19,6 +19,7 @@ class Settings(BaseSettings):
 
     allowed_users: list[int] = []
     database_path: str = "data/sessions.db"
+    telegram_api_url: str = "https://api.telegram.org"
 
     @field_validator("bot_token", mode="after")
     @classmethod
