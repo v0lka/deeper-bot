@@ -19,6 +19,8 @@ class Settings(BaseSettings):
     llm_api_key: str
     llm_use_reasoning: bool = True
     llm_reasoning_effort: str = "high"
+    llm_temperature: float = 0.6
+    llm_utility_temperature: float = 0.2
     llm_utility_model: str | None = None
 
     allowed_users: list[int] = []

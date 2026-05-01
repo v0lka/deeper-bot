@@ -1,49 +1,9 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import litellm
-import pytest
 
 from deeper_bot.agent import run_agent
-from deeper_bot.session import Session, SessionState, SessionStore
-
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
-
-@pytest.fixture
-def session():
-    s = Session(chat_id=1)
-    s.messages = [{"role": "system", "content": "You are helpful."}]
-    s.research_start_idx = 1
-    return s
-
-
-@pytest.fixture
-def bot():
-    b = AsyncMock()
-    b.send_message = AsyncMock()
-    b.send_chat_action = AsyncMock()
-    return b
-
-
-@pytest.fixture
-def settings():
-    s = MagicMock()
-    s.llm_model = "test-model"
-    s.llm_base_url = "http://localhost"
-    s.llm_api_key = "test-key"
-    s.llm_use_reasoning = False
-    return s
-
-
-@pytest.fixture
-async def session_store(tmp_path):
-    store = SessionStore(str(tmp_path / "test.db"))
-    await store.init()
-    yield store
-    await store.close()
-
+from deeper_bot.session import SessionState
 
 # ---------------------------------------------------------------------------
 # Agent loop tests
@@ -225,11 +185,91 @@ class TestAgentLoop:
         status_msgs = [m for m in llm_messages if m.get("content", "").startswith("## Current Research Progress")]
         assert len(status_msgs) == 0
 
+    async def test_dynamic_date_injected_on_every_call(self, session, bot, settings, session_store):
+        """Current date should be injected as a system message on every LLM call."""
+        session.messages.append({"role": "user", "content": "Hello"})
+
+        msg = MagicMock()
+        msg.tool_calls = None
+        msg.content = "Response"
+        msg.model_dump.return_value = {"role": "assistant", "content": "Response"}
+        response = MagicMock()
+        response.choices = [MagicMock(message=msg)]
+
+        captured_kwargs = {}
+
+        async def capture_llm(kwargs):
+            captured_kwargs.update(kwargs)
+            return response
+
+        with patch("deeper_bot.agent.llm_call_with_retry", side_effect=capture_llm):
+            await run_agent(session, bot, 1, settings, session_store)
+
+        llm_messages = captured_kwargs["messages"]
+        date_msgs = [m for m in llm_messages if m.get("content", "").startswith("Today's date:")]
+        assert len(date_msgs) == 1
+        # session.messages should NOT contain the ephemeral date message
+        for m in session.messages:
+            assert "Today's date:" not in m.get("content", "")
+
+    async def test_language_hint_injected_on_first_interaction(self, session, bot, settings, session_store):
+        """Language hint should be injected only on the first interaction (before initialized)."""
+        session.messages.append({"role": "user", "content": "Hello"})
+        session.language_code = "ru"
+        assert session.initialized is False
+
+        msg = MagicMock()
+        msg.tool_calls = None
+        msg.content = "Response"
+        msg.model_dump.return_value = {"role": "assistant", "content": "Response"}
+        response = MagicMock()
+        response.choices = [MagicMock(message=msg)]
+
+        captured_kwargs = {}
+
+        async def capture_llm(kwargs):
+            captured_kwargs.update(kwargs)
+            return response
+
+        with patch("deeper_bot.agent.llm_call_with_retry", side_effect=capture_llm):
+            await run_agent(session, bot, 1, settings, session_store)
+
+        llm_messages = captured_kwargs["messages"]
+        lang_msgs = [m for m in llm_messages if "Telegram interface language" in m.get("content", "")]
+        assert len(lang_msgs) == 1
+        assert "ru" in lang_msgs[0]["content"]
+
+    async def test_language_hint_not_injected_after_initialized(self, session, bot, settings, session_store):
+        """Language hint should NOT be injected after the first interaction."""
+        session.messages.append({"role": "user", "content": "Hello"})
+        session.language_code = "ru"
+        session.initialized = True
+
+        msg = MagicMock()
+        msg.tool_calls = None
+        msg.content = "Response"
+        msg.model_dump.return_value = {"role": "assistant", "content": "Response"}
+        response = MagicMock()
+        response.choices = [MagicMock(message=msg)]
+
+        captured_kwargs = {}
+
+        async def capture_llm(kwargs):
+            captured_kwargs.update(kwargs)
+            return response
+
+        with patch("deeper_bot.agent.llm_call_with_retry", side_effect=capture_llm):
+            await run_agent(session, bot, 1, settings, session_store)
+
+        llm_messages = captured_kwargs["messages"]
+        lang_msgs = [m for m in llm_messages if "Telegram interface language" in m.get("content", "")]
+        assert len(lang_msgs) == 0
+
     async def test_clear_status_on_completion(self, session, bot, settings, session_store):
         """After run_agent completes, todo_list should be cleared."""
         session.messages.append({"role": "user", "content": "Hello"})
         session.todo_list = "- [x] Done"
-        session._status_announced = True
+        session.status_announced = True
 
         msg = MagicMock()
         msg.tool_calls = None
@@ -242,7 +282,7 @@ class TestAgentLoop:
             await run_agent(session, bot, 1, settings, session_store)
 
         assert session.todo_list is None
-        assert session._status_announced is False
+        assert session.status_announced is False
 
 
 class TestTelegramForbiddenHandling:

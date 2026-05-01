@@ -3,7 +3,7 @@
 import logging
 
 from deeper_bot.config import Settings
-from deeper_bot.llm import llm_call_with_retry
+from deeper_bot.llm import build_llm_kwargs, llm_call_with_retry
 from deeper_bot.session import SUMMARY_PREFIX, Session
 
 logger = logging.getLogger(__name__)
@@ -83,16 +83,16 @@ async def compact_context(session: Session, settings: Settings) -> None:
 
     try:
         response = await llm_call_with_retry(
-            {
-                "model": settings.resolved_utility_model,
-                "messages": [
+            build_llm_kwargs(
+                settings,
+                model=settings.resolved_utility_model,
+                messages=[
                     {"role": "system", "content": SUMMARIZATION_SYSTEM_PROMPT},
                     {"role": "user", "content": rendered},
                 ],
-                "api_base": settings.llm_base_url,
-                "api_key": settings.resolved_llm_api_key,
-                "max_tokens": 1000,
-            }
+                max_tokens=1000,
+                temperature=settings.llm_utility_temperature,
+            )
         )
         summary_text = response.choices[0].message.content or ""
     except Exception as e:

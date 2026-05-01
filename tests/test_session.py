@@ -15,8 +15,9 @@ class TestSessionStateMachine:
         assert s.state == SessionState.IDLE
         assert s.messages == []
         assert s.research_start_idx == 0
+        assert s.language_code is None
         assert s.todo_list is None
-        assert s._status_announced is False
+        assert s.status_announced is False
 
     async def test_set_awaiting_answer(self):
         s = Session(chat_id=1)
@@ -77,16 +78,16 @@ class TestSessionStateMachine:
     def test_clear_status_resets_fields(self):
         s = Session(chat_id=1)
         s.todo_list = "- [ ] Step 1"
-        s._status_announced = True
+        s.status_announced = True
         s.clear_status()
         assert s.todo_list is None
-        assert s._status_announced is False
+        assert s.status_announced is False
 
     def test_clear_status_when_already_none(self):
         s = Session(chat_id=1)
         s.clear_status()
         assert s.todo_list is None
-        assert s._status_announced is False
+        assert s.status_announced is False
 
 
 # ---------------------------------------------------------------------------
@@ -129,8 +130,9 @@ class TestSessionStore:
         session.research_start_idx = 1
         session.state = SessionState.RESEARCHING
         session.todo_list = "- [ ] Step 1"
-        session._initialized = True
-        session._status_announced = True
+        session.initialized = True
+        session.status_announced = True
+        session.language_code = "ru"
         await store1.save(session)
         await store1.close()
 
@@ -144,8 +146,9 @@ class TestSessionStore:
         assert reloaded.messages == [{"role": "system", "content": "hello"}]
         assert reloaded.research_start_idx == 1
         assert reloaded.todo_list == "- [ ] Step 1"
-        assert reloaded._initialized is True
-        assert reloaded._status_announced is True
+        assert reloaded.initialized is True
+        assert reloaded.status_announced is True
+        assert reloaded.language_code == "ru"
         await store2.close()
 
     async def test_delete(self, store):
@@ -209,11 +212,12 @@ class TestSessionStore:
         assert reloaded.messages == [{"role": "user", "content": "hi"}]
         assert reloaded.research_start_idx == 1
         assert reloaded.todo_list is None
-        assert reloaded._initialized is False
-        assert reloaded._status_announced is False
+        assert reloaded.initialized is False
+        assert reloaded.status_announced is False
+        assert reloaded.language_code is None
 
         reloaded.todo_list = "plan"
-        reloaded._initialized = True
+        reloaded.initialized = True
         await store.save(reloaded)
         await store.close()
 
@@ -221,7 +225,7 @@ class TestSessionStore:
         await store2.init()
         again = await store2.get_or_create(7)
         assert again.todo_list == "plan"
-        assert again._initialized is True
+        assert again.initialized is True
         await store2.close()
 
 

@@ -1,5 +1,9 @@
 """System prompt defining the Tree of Thoughts research methodology and output format."""
 
+from datetime import datetime
+
+from deeper_bot.session import Session
+
 SYSTEM_PROMPT = """\
 You are Deeper Research Bot — an expert research analyst skilled in producing thoroughly cited, multi-perspective syntheses. Your goal is to deliver actionable, high-fidelity insights by clearly separating established facts from emerging trends, hypotheses, and speculation.
 
@@ -113,3 +117,28 @@ Your final research report MUST follow this Markdown structure:
 ## Gaps and Further Research
 [Critical unanswered questions, needed long-term studies, or missing data that could resolve current debates. Suggest what type of evidence would increase confidence.]\
 """
+
+
+def get_dynamic_system_messages(session: Session) -> list[dict]:
+    """Build ephemeral system messages with current date and language hints.
+
+    These messages are injected into every LLM call but are not persisted
+    in session.messages, ensuring the date is always current.
+    """
+    messages: list[dict] = []
+
+    today = datetime.now().strftime("%Y-%m-%d")
+    messages.append({"role": "system", "content": f"Today's date: {today}"})
+
+    if session.language_code and not session.initialized:
+        messages.append(
+            {
+                "role": "system",
+                "content": (
+                    f"The user's Telegram interface language is '{session.language_code}'. "
+                    "If you are greeting the user, use this language for the greeting."
+                ),
+            }
+        )
+
+    return messages

@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+from dataclasses import dataclass, field
 from typing import Any
 
 from aiogram import BaseMiddleware, Bot, Router
@@ -19,12 +20,17 @@ from deeper_bot.tools import markdown_to_telegram_html
 
 logger = logging.getLogger(__name__)
 
-_active_tasks: dict[int, asyncio.Task] = {}
-
-# Media group buffering (Telegram sends each file in a group as a separate message)
-_media_group_buffers: dict[str, list[Message]] = {}
-_media_group_timers: dict[str, asyncio.Task] = {}
 _MEDIA_GROUP_DELAY = 1.5
+
+
+@dataclass
+class BotState:
+    """Mutable runtime state for the Telegram bot."""
+
+    active_tasks: dict[int, asyncio.Task] = field(default_factory=dict)
+    media_group_buffers: dict[str, list[Message]] = field(default_factory=dict)
+    media_group_timers: dict[str, asyncio.Task] = field(default_factory=dict)
+
 
 FILES_ADDED_MSG = "File added to context. Send your research question or instructions."
 
@@ -34,7 +40,7 @@ UNSUPPORTED_FORMAT_MSG = (
 
 CONVERSION_FAILED_MSG = "Failed to process the attached file. Please check the file is not corrupted."
 
-WAIT_INIT_MSG = "Wait for initialization please (it may take a few seconds) 🙏"
+WAIT_INIT_MSG = "Wait for initialization please (it may take a few seconds) \U0001f64f"
 
 
 # ---------------------------------------------------------------------------
@@ -84,10 +90,17 @@ async def _handle_user_input(
     session_store: SessionStore,
     settings: Settings,
     bot: Bot,
+    bot_state: BotState,
 ) -> None:
     """Add user content to session and start agent if appropriate."""
     session = await session_store.get_or_create(chat_id)
 
+    if message.from_user and message.from_user.language_code:
+        session.language_code = message.from_user.language_code
+
+    # Lock held through state transition + save to prevent concurrent
+    # agent starts. The RESEARCHING state gate prevents re-entry even
+    # after the lock is released and the agent task is created below.
     async with session.lock:
         if session.state == SessionState.AWAITING_ANSWER:
             session.resolve_answer(user_content)
@@ -120,18 +133,18 @@ async def _handle_user_input(
         session.state = SessionState.RESEARCHING
         await session_store.save(session)
 
-        if not session._initialized:
+        if not session.initialized:
             await message.reply(
                 markdown_to_telegram_html(WAIT_INIT_MSG),
                 parse_mode=ParseMode.HTML,
             )
 
         task = asyncio.create_task(run_agent(session, bot, chat_id, settings, session_store))
-        _active_tasks[chat_id] = task
+        bot_state.active_tasks[chat_id] = task
 
         def _on_task_done(t: asyncio.Task) -> None:
             try:
-                _active_tasks.pop(chat_id, None)
+                bot_state.active_tasks.pop(chat_id, None)
                 if t.cancelled():
                     return
                 exc = t.exception()
@@ -149,11 +162,12 @@ async def _process_media_group(
     bot: Bot,
     session_store: SessionStore,
     settings: Settings,
+    bot_state: BotState,
 ) -> None:
     """Wait for all messages in a media group, then process them as a single prompt."""
     await asyncio.sleep(_MEDIA_GROUP_DELAY)
-    messages = _media_group_buffers.pop(media_group_id, [])
-    _media_group_timers.pop(media_group_id, None)
+    messages = bot_state.media_group_buffers.pop(media_group_id, [])
+    bot_state.media_group_timers.pop(media_group_id, None)
 
     if not messages:
         return
@@ -218,6 +232,7 @@ async def _process_media_group(
         session_store=session_store,
         settings=settings,
         bot=bot,
+        bot_state=bot_state,
     )
 
 
@@ -251,62 +266,76 @@ class WhitelistMiddleware(BaseMiddleware):
 # ---------------------------------------------------------------------------
 
 
+async def clear_session(message: Message, session_store: SessionStore, bot_state: BotState) -> None:
+    """Clear session state, cancel active tasks, and reset context."""
+    chat_id = message.chat.id
+    session = await session_store.get_or_create(chat_id)
+    async with session.lock:
+        task = bot_state.active_tasks.pop(chat_id, None)
+        if task and not task.done():
+            task.cancel()
+        session.cancel_pending()
+        session.clear_status()
+
+        session.messages = []
+        session.research_start_idx = 0
+        session.state = SessionState.IDLE
+        await session_store.save(session)
+
+    await message.answer(markdown_to_telegram_html("Context cleared."), parse_mode=ParseMode.HTML)
+
+
+async def compact_session(message: Message, session_store: SessionStore, settings: Settings) -> None:
+    """Compact session context by summarizing old messages."""
+    chat_id = message.chat.id
+    session = await session_store.get_or_create(chat_id)
+    async with session.lock:
+        if session.research_start_idx <= 1:
+            await message.answer(markdown_to_telegram_html("Nothing to compact."), parse_mode=ParseMode.HTML)
+            return
+        await compact_context(session, settings)
+        await session_store.save(session)
+
+    await message.answer(markdown_to_telegram_html("Context compacted."), parse_mode=ParseMode.HTML)
+
+
+async def show_status(message: Message, session_store: SessionStore) -> None:
+    """Show current research status and TODO list."""
+    chat_id = message.chat.id
+    session = await session_store.get_or_create(chat_id)
+    if session.state not in (SessionState.RESEARCHING, SessionState.AWAITING_ANSWER):
+        await message.answer(markdown_to_telegram_html("No active research session."), parse_mode=ParseMode.HTML)
+        return
+    if session.todo_list is None:
+        await message.answer(
+            markdown_to_telegram_html("Research is in progress, but no plan has been set yet."),
+            parse_mode=ParseMode.HTML,
+        )
+        return
+    html = markdown_to_telegram_html(f"TODO:\n\n{session.todo_list}")
+    await message.answer(html, parse_mode=ParseMode.HTML)
+
+
 def create_router() -> Router:
     """Create and configure the aiogram Router with all handlers."""
     router = Router(name="deeper_bot")
 
     @router.message(Command("clear"))
-    async def handle_clear(message: Message, session_store: SessionStore, **kwargs: Any) -> None:
-        chat_id = message.chat.id
-
-        session = await session_store.get_or_create(chat_id)
-        async with session.lock:
-            task = _active_tasks.pop(chat_id, None)
-            if task and not task.done():
-                task.cancel()
-            session.cancel_pending()
-            session.clear_status()
-
-            session.messages = []
-            session.research_start_idx = 0
-            session.state = SessionState.IDLE
-            await session_store.save(session)
-
-        await message.answer(markdown_to_telegram_html("Context cleared."), parse_mode=ParseMode.HTML)
+    async def handle_clear(message: Message, session_store: SessionStore, bot_state: BotState, **kwargs: Any) -> None:
+        await clear_session(message, session_store, bot_state)
 
     @router.message(Command("compact"))
     async def handle_compact(message: Message, session_store: SessionStore, settings: Settings, **kwargs: Any) -> None:
-        chat_id = message.chat.id
-
-        session = await session_store.get_or_create(chat_id)
-        async with session.lock:
-            if session.research_start_idx <= 1:
-                await message.answer(markdown_to_telegram_html("Nothing to compact."), parse_mode=ParseMode.HTML)
-                return
-
-            await compact_context(session, settings)
-            await session_store.save(session)
-
-        await message.answer(markdown_to_telegram_html("Context compacted."), parse_mode=ParseMode.HTML)
+        await compact_session(message, session_store, settings)
 
     @router.message(Command("status"))
     async def handle_status(message: Message, session_store: SessionStore, **kwargs: Any) -> None:
-        chat_id = message.chat.id
-        session = await session_store.get_or_create(chat_id)
-        if session.state not in (SessionState.RESEARCHING, SessionState.AWAITING_ANSWER):
-            await message.answer(markdown_to_telegram_html("No active research session."), parse_mode=ParseMode.HTML)
-            return
-        if session.todo_list is None:
-            await message.answer(
-                markdown_to_telegram_html("Research is in progress, but no plan has been set yet."),
-                parse_mode=ParseMode.HTML,
-            )
-            return
-        html = markdown_to_telegram_html(f"TODO:\n\n{session.todo_list}")
-        await message.answer(html, parse_mode=ParseMode.HTML)
+        await show_status(message, session_store)
 
     @router.message()
-    async def handle_message(message: Message, session_store: SessionStore, settings: Settings, bot: Bot) -> None:
+    async def handle_message(
+        message: Message, session_store: SessionStore, settings: Settings, bot: Bot, bot_state: BotState
+    ) -> None:
         if message.chat.type != "private":
             return
         if not message.text and not message.document:
@@ -317,12 +346,12 @@ def create_router() -> Router:
         # Buffer media groups so multiple files sent together are combined into one prompt
         if message.media_group_id:
             mg_id = message.media_group_id
-            if mg_id not in _media_group_buffers:
-                _media_group_buffers[mg_id] = []
-                _media_group_timers[mg_id] = asyncio.create_task(
-                    _process_media_group(chat_id, mg_id, bot, session_store, settings)
+            if mg_id not in bot_state.media_group_buffers:
+                bot_state.media_group_buffers[mg_id] = []
+                bot_state.media_group_timers[mg_id] = asyncio.create_task(
+                    _process_media_group(chat_id, mg_id, bot, session_store, settings, bot_state)
                 )
-            _media_group_buffers[mg_id].append(message)
+            bot_state.media_group_buffers[mg_id].append(message)
             return
 
         # Single message handling
@@ -359,6 +388,7 @@ def create_router() -> Router:
             session_store,
             settings,
             bot,
+            bot_state,
         )
 
     return router

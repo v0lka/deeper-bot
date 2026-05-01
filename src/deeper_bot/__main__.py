@@ -8,7 +8,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 
-from deeper_bot.bot import create_router, on_startup, setup_router
+from deeper_bot.bot import BotState, create_router, on_startup, setup_router
 from deeper_bot.config import get_settings
 from deeper_bot.session import SessionStore
 from deeper_bot.tools import close_http_client
@@ -32,6 +32,7 @@ async def main() -> None:
 
     dp["session_store"] = store
     dp["settings"] = settings
+    dp["bot_state"] = BotState()
 
     router = create_router()
     setup_router(router, settings)

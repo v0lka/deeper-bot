@@ -101,3 +101,20 @@ class TestSettings:
             allowed_users="[1, 2]",
         )
         assert s.allowed_users == [1, 2]
+
+    def test_default_llm_temperature(self):
+        s = _make_settings(bot_token="123:ABC", llm_base_url="http://x", llm_model="m", llm_api_key="sk-test")
+        assert s.llm_temperature == 0.6
+        assert s.llm_utility_temperature == 0.2
+
+    def test_custom_llm_temperature(self):
+        s = _make_settings(
+            bot_token="123:ABC",
+            llm_base_url="http://x",
+            llm_model="m",
+            llm_api_key="sk-test",
+            llm_temperature="0.9",
+            llm_utility_temperature="0.1",
+        )
+        assert s.llm_temperature == 0.9
+        assert s.llm_utility_temperature == 0.1

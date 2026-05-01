@@ -32,17 +32,18 @@ class Session:
     state: SessionState = SessionState.IDLE
     messages: list[dict] = field(default_factory=list)
     research_start_idx: int = 0
+    language_code: str | None = None
     _pending_future: asyncio.Future | None = field(default=None, repr=False)
     lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
     todo_list: str | None = field(default=None, repr=False)
-    _status_announced: bool = field(default=False, repr=False)
-    _initialized: bool = field(default=False, repr=False)
+    status_announced: bool = field(default=False, repr=False)
+    initialized: bool = field(default=False, repr=False)
     last_accessed: float = field(default_factory=monotonic, repr=False)
 
     def clear_status(self) -> None:
         """Clear the TODO list and reset status announcement flag."""
         self.todo_list = None
-        self._status_announced = False
+        self.status_announced = False
 
     def set_awaiting_answer(self, future: asyncio.Future) -> None:
         """Store the future and transition to AWAITING_ANSWER state."""
@@ -137,13 +138,15 @@ class SessionStore:
                 updated_at TEXT NOT NULL DEFAULT (datetime('now')),
                 todo_list TEXT,
                 initialized INTEGER NOT NULL DEFAULT 0,
-                status_announced INTEGER NOT NULL DEFAULT 0
+                status_announced INTEGER NOT NULL DEFAULT 0,
+                language_code TEXT
             )
         """)
         for alter_stmt in (
             "ALTER TABLE sessions ADD COLUMN todo_list TEXT",
             "ALTER TABLE sessions ADD COLUMN initialized INTEGER NOT NULL DEFAULT 0",
             "ALTER TABLE sessions ADD COLUMN status_announced INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE sessions ADD COLUMN language_code TEXT",
         ):
             try:
                 await self._db.execute(alter_stmt)
@@ -172,7 +175,7 @@ class SessionStore:
             if self._db is None:
                 raise RuntimeError("SessionStore not initialized — call init() first")
             async with self._db.execute(
-                "SELECT state, messages, research_start_idx, todo_list, initialized, status_announced FROM sessions WHERE chat_id = ?",  # noqa: E501
+                "SELECT state, messages, research_start_idx, todo_list, initialized, status_announced, language_code FROM sessions WHERE chat_id = ?",  # noqa: E501
                 (chat_id,),
             ) as cursor:
                 row = await cursor.fetchone()
@@ -184,8 +187,9 @@ class SessionStore:
                     messages=json.loads(row[1]),
                     research_start_idx=row[2],
                     todo_list=row[3],
-                    _initialized=bool(row[4]),
-                    _status_announced=bool(row[5]),
+                    initialized=bool(row[4]),
+                    status_announced=bool(row[5]),
+                    language_code=row[6],
                 )
             else:
                 session = Session(chat_id=chat_id)
@@ -201,8 +205,8 @@ class SessionStore:
         messages_json = json.dumps(session.messages, ensure_ascii=False)
         await self._db.execute(
             """
-            INSERT INTO sessions (chat_id, state, messages, research_start_idx, updated_at, todo_list, initialized, status_announced)
-            VALUES (?, ?, ?, ?, datetime('now'), ?, ?, ?)
+            INSERT INTO sessions (chat_id, state, messages, research_start_idx, updated_at, todo_list, initialized, status_announced, language_code)
+            VALUES (?, ?, ?, ?, datetime('now'), ?, ?, ?, ?)
             ON CONFLICT(chat_id) DO UPDATE SET
                 state = excluded.state,
                 messages = excluded.messages,
@@ -210,7 +214,8 @@ class SessionStore:
                 updated_at = excluded.updated_at,
                 todo_list = excluded.todo_list,
                 initialized = excluded.initialized,
-                status_announced = excluded.status_announced
+                status_announced = excluded.status_announced,
+                language_code = excluded.language_code
             """,  # noqa: E501
             (
                 session.chat_id,
@@ -218,8 +223,9 @@ class SessionStore:
                 messages_json,
                 session.research_start_idx,
                 session.todo_list,
-                1 if session._initialized else 0,
-                1 if session._status_announced else 0,
+                1 if session.initialized else 0,
+                1 if session.status_announced else 0,
+                session.language_code,
             ),
         )
         await self._db.commit()

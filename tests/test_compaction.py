@@ -1,19 +1,7 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
-
 from deeper_bot.compaction import _render_messages_for_summary, compact_context
 from deeper_bot.session import SUMMARY_PREFIX, Session
-
-
-@pytest.fixture
-def settings():
-    s = MagicMock()
-    s.llm_model = "test-model"
-    s.llm_base_url = "http://localhost"
-    s.llm_api_key = "test-key"
-    return s
-
 
 # ---------------------------------------------------------------------------
 # _render_messages_for_summary tests

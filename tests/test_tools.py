@@ -1,8 +1,8 @@
-import json
 import socket
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from helpers import make_tool_call
 
 from deeper_bot.session import Session, SessionState
 from deeper_bot.tools import (
@@ -166,7 +166,7 @@ class TestSSRFTransport:
 
         with (
             patch(
-                "deeper_bot.tools.socket.getaddrinfo",
+                "deeper_bot.tools.http.socket.getaddrinfo",
                 return_value=[(socket.AF_INET, socket.SOCK_STREAM, 0, "", ("127.0.0.1", 0))],
             ),
             pytest.raises(SSRFBlockedError, match="private"),
@@ -183,7 +183,7 @@ class TestSSRFTransport:
         mock_response = MagicMock()
         with (
             patch(
-                "deeper_bot.tools.socket.getaddrinfo",
+                "deeper_bot.tools.http.socket.getaddrinfo",
                 return_value=[(socket.AF_INET, socket.SOCK_STREAM, 0, "", ("93.184.216.34", 0))],
             ),
             patch.object(
@@ -202,42 +202,13 @@ class TestSSRFTransport:
 # ---------------------------------------------------------------------------
 
 
-def _make_tool_call(name: str, arguments: dict, call_id: str = "call_1"):
-    """Create a mock tool call object."""
-    tc = MagicMock()
-    tc.id = call_id
-    tc.function.name = name
-    tc.function.arguments = json.dumps(arguments)
-    return tc
-
-
-def _make_settings():
-    """Create a mock Settings object for tool execution."""
-    s = MagicMock()
-    s.llm_model = "test-model"
-    s.llm_base_url = "http://localhost"
-    s.llm_api_key = "test-key"
-    return s
-
-
 class TestExecuteTool:
     @pytest.fixture
     def session(self):
         return Session(chat_id=123)
 
-    @pytest.fixture
-    def bot(self):
-        b = AsyncMock()
-        b.send_message = AsyncMock()
-        b.send_document = AsyncMock()
-        return b
-
-    @pytest.fixture
-    def settings(self):
-        return _make_settings()
-
     async def test_unknown_tool(self, session, bot, settings):
-        tc = _make_tool_call("nonexistent", {})
+        tc = make_tool_call("nonexistent", {})
         msg, is_finish = await execute_tool(tc, session, bot, 123, settings)
         assert msg["content"] == "Unknown tool: nonexistent"
         assert not is_finish
@@ -262,40 +233,40 @@ class TestExecuteTool:
         assert not is_finish
 
     async def test_web_search_invalid_query_type(self, session, bot, settings):
-        tc = _make_tool_call("web_search", {"query": 123})
+        tc = make_tool_call("web_search", {"query": 123})
         msg, is_finish = await execute_tool(tc, session, bot, 123, settings)
         assert "Invalid arguments" in msg["content"]
         assert not is_finish
 
     async def test_web_search_empty_query(self, session, bot, settings):
-        tc = _make_tool_call("web_search", {"query": ""})
+        tc = make_tool_call("web_search", {"query": ""})
         msg, is_finish = await execute_tool(tc, session, bot, 123, settings)
         assert "Invalid arguments" in msg["content"]
 
     async def test_web_search_max_results_too_high(self, session, bot, settings):
-        tc = _make_tool_call("web_search", {"query": "test", "max_results": 20})
+        tc = make_tool_call("web_search", {"query": "test", "max_results": 20})
         msg, is_finish = await execute_tool(tc, session, bot, 123, settings)
         assert "Invalid arguments" in msg["content"]
         assert not is_finish
 
     async def test_web_fetch_invalid_url(self, session, bot, settings):
-        tc = _make_tool_call("web_fetch", {"url": ""})
+        tc = make_tool_call("web_fetch", {"url": ""})
         msg, is_finish = await execute_tool(tc, session, bot, 123, settings)
         assert "Invalid arguments" in msg["content"]
 
     async def test_ask_user_invalid_question(self, session, bot, settings):
-        tc = _make_tool_call("ask_user", {"question": ""})
+        tc = make_tool_call("ask_user", {"question": ""})
         msg, is_finish = await execute_tool(tc, session, bot, 123, settings)
         assert "Invalid arguments" in msg["content"]
 
     async def test_finish_invalid_markdown(self, session, bot, settings):
-        tc = _make_tool_call("finish", {"result_markdown": ""})
+        tc = make_tool_call("finish", {"result_markdown": ""})
         msg, is_finish = await execute_tool(tc, session, bot, 123, settings)
         assert "Invalid arguments" in msg["content"]
 
     async def test_web_search_valid(self, session, bot, settings):
-        tc = _make_tool_call("web_search", {"query": "test query"})
-        with patch("deeper_bot.tools.DDGS") as mock_ddgs:
+        tc = make_tool_call("web_search", {"query": "test query"})
+        with patch("deeper_bot.tools.executor.DDGS") as mock_ddgs:
             mock_ddgs.return_value.text.return_value = [
                 {"title": "Result", "href": "http://example.com", "body": "snippet"}
             ]
@@ -304,17 +275,53 @@ class TestExecuteTool:
         assert not is_finish
 
     async def test_finish_valid_small(self, session, bot, settings):
-        tc = _make_tool_call("finish", {"result_markdown": "# Report\nDone."})
+        tc = make_tool_call("finish", {"result_markdown": "# Report\nDone."})
         msg, is_finish = await execute_tool(tc, session, bot, 123, settings)
         assert is_finish
         assert "delivered" in msg["content"].lower()
         bot.send_message.assert_called()
 
+    async def test_finish_valid_large(self, session, bot, settings):
+        long_markdown = "# " + "x" * 5000
+        tc = make_tool_call("finish", {"result_markdown": long_markdown})
+
+        summary_text = "Key findings: the research discovered important results."
+        mock_llm_response = MagicMock()
+        mock_llm_response.choices = [MagicMock(message=MagicMock(content=summary_text))]
+
+        with patch(
+            "deeper_bot.tools.executor.llm_call_with_retry", new_callable=AsyncMock, return_value=mock_llm_response
+        ):
+            msg, is_finish = await execute_tool(tc, session, bot, 123, settings)
+
+        assert is_finish
+        assert "file with summary" in msg["content"].lower()
+        bot.send_document.assert_called_once()
+        call_kwargs = bot.send_document.call_args.kwargs
+        assert "caption" in call_kwargs
+        assert summary_text in call_kwargs["caption"]
+        bot.send_message.assert_not_called()
+
+    async def test_finish_large_summary_failure_fallback(self, session, bot, settings):
+        long_markdown = "# " + "x" * 5000
+        tc = make_tool_call("finish", {"result_markdown": long_markdown})
+
+        with patch(
+            "deeper_bot.tools.executor.llm_call_with_retry", new_callable=AsyncMock, side_effect=Exception("LLM error")
+        ):
+            msg, is_finish = await execute_tool(tc, session, bot, 123, settings)
+
+        assert is_finish
+        bot.send_document.assert_called_once()
+        call_kwargs = bot.send_document.call_args.kwargs
+        assert "caption" in call_kwargs
+        assert "Research complete" in call_kwargs["caption"]
+
     async def test_telegram_forbidden_propagated(self, session, bot, settings):
         """TelegramForbiddenError should propagate out of execute_tool, not be swallowed."""
         from aiogram.exceptions import TelegramForbiddenError
 
-        tc = _make_tool_call("finish", {"result_markdown": "# Done"})
+        tc = make_tool_call("finish", {"result_markdown": "# Done"})
         bot.send_message = AsyncMock(
             side_effect=TelegramForbiddenError(
                 method=MagicMock(),
@@ -341,7 +348,7 @@ class TestAskUserTimeout:
         bot.send_message = AsyncMock()
 
         # Patch wait_for to immediately raise TimeoutError
-        with patch("deeper_bot.tools.asyncio.wait_for", side_effect=TimeoutError):
+        with patch("deeper_bot.tools.executor.asyncio.wait_for", side_effect=TimeoutError):
             result = await _ask_user("question?", session, bot, 1)
 
         assert session.state == SessionState.RESEARCHING
@@ -362,16 +369,6 @@ class TestSetStatus:
     def session(self):
         return Session(chat_id=123)
 
-    @pytest.fixture
-    def bot(self):
-        b = AsyncMock()
-        b.send_message = AsyncMock()
-        return b
-
-    @pytest.fixture
-    def settings(self):
-        return _make_settings()
-
     async def test_set_status_stores_todo_list(self, session, bot):
         from deeper_bot.tools import _set_status
 
@@ -381,9 +378,9 @@ class TestSetStatus:
     async def test_set_status_first_call_sends_message(self, session, bot):
         from deeper_bot.tools import _set_status
 
-        assert not session._status_announced
+        assert not session.status_announced
         await _set_status("- [ ] Step 1", session, bot, 123)
-        assert session._status_announced
+        assert session.status_announced
         bot.send_message.assert_called_once()
         sent_text = bot.send_message.call_args.args[1]
         assert "/status" in sent_text
@@ -391,7 +388,7 @@ class TestSetStatus:
     async def test_set_status_subsequent_calls_silent(self, session, bot):
         from deeper_bot.tools import _set_status
 
-        session._status_announced = True
+        session.status_announced = True
         await _set_status("- [x] Step 1\n- [ ] Step 2", session, bot, 123)
         assert session.todo_list == "- [x] Step 1\n- [ ] Step 2"
         bot.send_message.assert_not_called()
@@ -403,14 +400,14 @@ class TestSetStatus:
         assert result == "Status updated."
 
     async def test_execute_tool_set_status(self, session, bot, settings):
-        tc = _make_tool_call("set_status", {"todo_list": "- [ ] Research"})
+        tc = make_tool_call("set_status", {"todo_list": "- [ ] Research"})
         msg, is_finish = await execute_tool(tc, session, bot, 123, settings)
         assert not is_finish
         assert "updated" in msg["content"].lower()
         assert session.todo_list == "- [ ] Research"
 
     async def test_set_status_empty_rejected(self, session, bot, settings):
-        tc = _make_tool_call("set_status", {"todo_list": ""})
+        tc = make_tool_call("set_status", {"todo_list": ""})
         msg, is_finish = await execute_tool(tc, session, bot, 123, settings)
         assert "Invalid arguments" in msg["content"]
         assert not is_finish
@@ -438,40 +435,42 @@ class TestWebFetchSummarization:
 
         mock_client = AsyncMock()
         mock_client.stream = MagicMock(return_value=mock_response)
-        return patch("deeper_bot.tools._get_http_client", return_value=mock_client)
+        return patch("deeper_bot.tools.executor._get_http_client", return_value=mock_client)
 
-    async def test_short_content_returned_as_is(self):
+    async def test_short_content_returned_as_is(self, settings):
         """Content under the limit should be returned without summarization."""
         from deeper_bot.tools import _web_fetch
 
         short_content = "Short article content."
-        settings = _make_settings()
 
         with (
             self._mock_http_stream(),
-            patch("deeper_bot.tools.trafilatura.extract", return_value=short_content),
-            patch("deeper_bot.tools.llm_call_with_retry", new_callable=AsyncMock) as mock_llm,
+            patch("deeper_bot.tools.executor.trafilatura.extract", return_value=short_content),
+            patch("deeper_bot.tools.executor.llm_call_with_retry", new_callable=AsyncMock) as mock_llm,
         ):
             result = await _web_fetch("http://example.com", settings)
 
         assert result == short_content
         mock_llm.assert_not_called()
 
-    async def test_long_content_summarized(self):
+    async def test_long_content_summarized(self, settings):
         """Content over the limit should be summarized via LLM."""
         from deeper_bot.tools import _web_fetch
 
         long_content = "x" * 20_000
         summary_text = "This is a summary of the long content."
-        settings = _make_settings()
 
         mock_llm_response = MagicMock()
         mock_llm_response.choices = [MagicMock(message=MagicMock(content=summary_text))]
 
         with (
             self._mock_http_stream(),
-            patch("deeper_bot.tools.trafilatura.extract", return_value=long_content),
-            patch("deeper_bot.tools.llm_call_with_retry", new_callable=AsyncMock, return_value=mock_llm_response),
+            patch("deeper_bot.tools.executor.trafilatura.extract", return_value=long_content),
+            patch(
+                "deeper_bot.tools.executor.llm_call_with_retry",
+                new_callable=AsyncMock,
+                return_value=mock_llm_response,
+            ),
         ):
             result = await _web_fetch("http://example.com", settings)
 
@@ -479,24 +478,27 @@ class TestWebFetchSummarization:
         assert "20000" in result
         assert summary_text in result
 
-    async def test_summarization_failure_falls_back_to_truncation(self):
+    async def test_summarization_failure_falls_back_to_truncation(self, settings):
         """If LLM summarization fails, should fall back to truncation."""
         from deeper_bot.tools import _web_fetch
 
         long_content = "y" * 20_000
-        settings = _make_settings()
 
         with (
             self._mock_http_stream(),
-            patch("deeper_bot.tools.trafilatura.extract", return_value=long_content),
-            patch("deeper_bot.tools.llm_call_with_retry", new_callable=AsyncMock, side_effect=Exception("LLM error")),
+            patch("deeper_bot.tools.executor.trafilatura.extract", return_value=long_content),
+            patch(
+                "deeper_bot.tools.executor.llm_call_with_retry",
+                new_callable=AsyncMock,
+                side_effect=Exception("LLM error"),
+            ),
         ):
             result = await _web_fetch("http://example.com", settings)
 
         assert result.endswith("[Content truncated]")
         assert len(result) < len(long_content)
 
-    async def test_ssrf_blocked_returns_error_message(self):
+    async def test_ssrf_blocked_returns_error_message(self, settings):
         """SSRF-blocked URL should return error string, not raise."""
         from deeper_bot.tools import SSRFBlockedError, _web_fetch
 
@@ -508,14 +510,13 @@ class TestWebFetchSummarization:
 
         mock_client = AsyncMock()
         mock_client.stream = MagicMock(return_value=mock_response)
-        settings = _make_settings()
 
-        with patch("deeper_bot.tools._get_http_client", return_value=mock_client):
+        with patch("deeper_bot.tools.executor._get_http_client", return_value=mock_client):
             result = await _web_fetch("http://evil.com", settings)
 
         assert "Access denied" in result
 
-    async def test_timeout_returns_error_message(self):
+    async def test_timeout_returns_error_message(self, settings):
         """Httpx timeout should return a user-friendly error."""
         import httpx
 
@@ -527,9 +528,8 @@ class TestWebFetchSummarization:
 
         mock_client = AsyncMock()
         mock_client.stream = MagicMock(return_value=mock_response)
-        settings = _make_settings()
 
-        with patch("deeper_bot.tools._get_http_client", return_value=mock_client):
+        with patch("deeper_bot.tools.executor._get_http_client", return_value=mock_client):
             result = await _web_fetch("http://slow.example.com", settings)
 
         assert "timed out" in result.lower()
