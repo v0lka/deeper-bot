@@ -132,6 +132,7 @@ cython_debug/
 .ruff_cache/
 
 # IDEs
+.qoder/
 .idea/
 .vscode/
 *.swp

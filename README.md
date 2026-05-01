@@ -1,11 +1,12 @@
 # Deeper Bot
 
-A Telegram bot for deep research using the **Tree of Thoughts** methodology. The bot acts as a ReAct agent that can search the web, analyze sources, and carry out multi-step research sessions directly inside a Telegram chat.
+A Telegram bot for deep research. The bot acts as a ReAct agent that can search the web, analyze sources, and carry out multi-step research sessions directly inside a Telegram chat.
 
 ## Features
 
 - **Deep Research Agent** — Multi-turn ReAct loop with tool use (web search, content extraction, asking clarifying questions, final answer delivery)
 - **Web Search & Scraping** — DuckDuckGo search with automatic content extraction via Trafilatura
+- **Document Uploads** — Attach PDF, DOCX, XLSX, PPTX, code files, and plain-text documents for analysis
 - **Session Persistence** — SQLite-backed session storage with context compaction support
 - **Access Control** — Optional allow-list for Telegram user IDs
 - **LLM-Agnostic** — Powered by LiteLLM; works with OpenAI, Anthropic, local models, or any OpenAI-compatible endpoint
@@ -14,19 +15,21 @@ A Telegram bot for deep research using the **Tree of Thoughts** methodology. The
 
 ## Tech Stack
 
-| Component          | Library                                                                                       |
-| ------------------ | --------------------------------------------------------------------------------------------- |
-| Telegram API       | [aiogram](https://docs.aiogram.dev/) 3.x                                                      |
-| LLM Gateway        | [litellm](https://docs.litellm.ai/)                                                           |
-| Web Search         | [DuckDuckGo Search (ddgs)](https://pypi.org/project/duckduckgo-search/)                       |
-| Content Extraction | [trafilatura](https://trafilatura.readthedocs.io/)                                            |
-| Configuration      | [pydantic-settings](https://docs.pydantic.dev/latest/concepts/pydantic_settings/)             |
-| Database           | [aiosqlite](https://github.com/omnilib/aiosqlite) (SQLite)                                    |
-| Markdown           | [mistune](https://mistune.lepture.com/)                                                       |
-| Build Tool         | [uv](https://docs.astral.sh/uv/)                                                              |
-| Build Backend      | [hatchling](https://hatch.pypa.io/)                                                           |
-| Linting            | [ruff](https://docs.astral.sh/ruff/)                                                          |
-| Testing            | [pytest](https://docs.pytest.org/) + [pytest-asyncio](https://pytest-asyncio.readthedocs.io/) |
+| Component           | Library                                                                                       |
+| ------------------- | --------------------------------------------------------------------------------------------- |
+| Telegram API        | [aiogram](https://docs.aiogram.dev/) 3.x                                                      |
+| LLM Gateway         | [litellm](https://docs.litellm.ai/)                                                           |
+| Web Search          | [DuckDuckGo Search (ddgs)](https://pypi.org/project/duckduckgo-search/)                       |
+| Content Extraction  | [trafilatura](https://trafilatura.readthedocs.io/)                                            |
+| Document Conversion | [markitdown](https://github.com/microsoft/markitdown)                                         |
+| HTTP Client         | [httpx](https://www.python-httpx.org/)                                                        |
+| Configuration       | [pydantic-settings](https://docs.pydantic.dev/latest/concepts/pydantic_settings/)             |
+| Database            | [aiosqlite](https://github.com/omnilib/aiosqlite) (SQLite)                                    |
+| Markdown            | [mistune](https://mistune.lepture.com/)                                                       |
+| Build Tool          | [uv](https://docs.astral.sh/uv/)                                                              |
+| Build Backend       | [hatchling](https://hatch.pypa.io/)                                                           |
+| Linting             | [ruff](https://docs.astral.sh/ruff/)                                                          |
+| Testing             | [pytest](https://docs.pytest.org/) + [pytest-asyncio](https://pytest-asyncio.readthedocs.io/) |
 
 ## Prerequisites
 
@@ -60,8 +63,8 @@ BOT_TOKEN=your-telegram-bot-token
 # LLM configuration
 LLM_BASE_URL=https://api.openai.com/v1
 LLM_MODEL=gpt-4o
-# Name of the environment variable that holds the LLM API key
-LLM_API_KEY_ENV=OPENAI_API_KEY
+# LLM API key — paste directly or reference an env var: ${OPENAI_API_KEY}
+LLM_API_KEY=${OPENAI_API_KEY}
 LLM_USE_REASONING=true
 LLM_REASONING_EFFORT=high
 
@@ -73,7 +76,7 @@ ALLOWED_USERS=
 DATABASE_PATH=data/sessions.db
 ```
 
-Make sure the API key environment variable is actually set:
+Make sure the referenced environment variable is actually set (not needed if you paste the key directly):
 
 ```bash
 export OPENAI_API_KEY="sk-..."
@@ -247,6 +250,7 @@ docker compose logs -f
 | ---------- | -------------------------------------------------- |
 | `/clear`   | Clear the current session context                  |
 | `/compact` | Compact the conversation context to free up tokens |
+| `/status`  | Show current research progress                     |
 
 ## Project Structure
 
@@ -259,6 +263,8 @@ deeper-bot/
 │   ├── bot.py           # Telegram handlers and middleware
 │   ├── compaction.py    # Context compaction logic
 │   ├── config.py        # Pydantic settings
+│   ├── converter.py     # File-to-markdown conversion
+│   ├── llm.py           # LLM client with retry logic
 │   ├── prompts.py       # System prompts
 │   ├── session.py       # SQLite session store
 │   └── tools.py         # Agent tools (search, scrape, etc.)
@@ -277,16 +283,17 @@ deeper-bot/
 
 ## Environment Variables Reference
 
-| Variable               | Required | Default            | Description                                                      |
-| ---------------------- | -------- | ------------------ | ---------------------------------------------------------------- |
-| `BOT_TOKEN`            | Yes      | —                  | Telegram Bot API token                                           |
-| `LLM_BASE_URL`         | Yes      | —                  | Base URL of the LLM API                                          |
-| `LLM_MODEL`            | Yes      | —                  | Model identifier (e.g., `gpt-4o`)                                |
-| `LLM_API_KEY_ENV`      | Yes      | —                  | Name of the env var holding the API key                          |
-| `LLM_USE_REASONING`    | No       | `true`             | Enable reasoning effort parameter                                |
-| `LLM_REASONING_EFFORT` | No       | `high`             | Reasoning effort level                                           |
-| `ALLOWED_USERS`        | No       | _(empty)_          | Comma-separated numeric Telegram user IDs allowed to use the bot |
-| `DATABASE_PATH`        | No       | `data/sessions.db` | Path to the SQLite database                                      |
+| Variable               | Required | Default            | Description                                                       |
+| ---------------------- | -------- | ------------------ | ----------------------------------------------------------------- |
+| `BOT_TOKEN`            | Yes      | —                  | Telegram Bot API token                                            |
+| `LLM_BASE_URL`         | Yes      | —                  | Base URL of the LLM API                                           |
+| `LLM_MODEL`            | Yes      | —                  | Model identifier (e.g., `gpt-4o`)                                 |
+| `LLM_API_KEY`          | Yes      | —                  | LLM API key, or `${ENV_VAR}` to reference an environment variable |
+| `LLM_USE_REASONING`    | No       | `true`             | Enable reasoning effort parameter                                 |
+| `LLM_REASONING_EFFORT` | No       | `high`             | Reasoning effort level                                            |
+| `LLM_UTILITY_MODEL`    | No       | —                  | Fallback model for utility tasks (summarization, compaction)      |
+| `ALLOWED_USERS`        | No       | _(empty)_          | Comma-separated numeric Telegram user IDs allowed to use the bot  |
+| `DATABASE_PATH`        | No       | `data/sessions.db` | Path to the SQLite database                                       |
 
 ## License
 

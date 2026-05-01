@@ -474,7 +474,7 @@ async def _summarize_web_content(content: str, settings: Settings) -> str | None
                     {"role": "user", "content": content},
                 ],
                 "api_base": settings.llm_base_url,
-                "api_key": settings.llm_api_key,
+                "api_key": settings.resolved_llm_api_key,
                 "max_tokens": 3000,
             }
         )

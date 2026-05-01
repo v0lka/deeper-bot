@@ -12,7 +12,7 @@ class Settings(BaseSettings):
 
     llm_base_url: str
     llm_model: str
-    llm_api_key_env: str
+    llm_api_key: str
     llm_use_reasoning: bool = True
     llm_reasoning_effort: str = "high"
     llm_utility_model: str | None = None
@@ -37,14 +37,15 @@ class Settings(BaseSettings):
         return v  # type: ignore[return-value]
 
     @property
-    def llm_api_key(self) -> str:
-        try:
-            return os.environ[self.llm_api_key_env]
-        except KeyError:
-            raise RuntimeError(
-                f"Environment variable '{self.llm_api_key_env}' is not set. "
-                f"Set it in your .env file or export it in your shell."
-            ) from None
+    def resolved_llm_api_key(self) -> str:
+        key = self.llm_api_key
+        if key.startswith("${") and key.endswith("}"):
+            env_var = key[2:-1]
+            try:
+                return os.environ[env_var]
+            except KeyError:
+                raise RuntimeError(f"Environment variable '{env_var}' referenced by LLM_API_KEY is not set.") from None
+        return key
 
     @property
     def resolved_utility_model(self) -> str:

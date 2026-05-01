@@ -88,7 +88,7 @@ async def compact_context(session: Session, settings: Settings) -> None:
                     {"role": "user", "content": rendered},
                 ],
                 "api_base": settings.llm_base_url,
-                "api_key": settings.llm_api_key,
+                "api_key": settings.resolved_llm_api_key,
                 "max_tokens": 1000,
             }
         )
