@@ -13,6 +13,7 @@ import mistune
 import trafilatura
 from aiogram import Bot
 from aiogram.enums import ParseMode
+from aiogram.exceptions import TelegramForbiddenError
 from aiogram.types import BufferedInputFile
 from ddgs import DDGS
 from litellm.types.utils import ChatCompletionMessageToolCall
@@ -518,6 +519,8 @@ async def _finish(result_markdown: str, bot: Bot, chat_id: int) -> str:
         try:
             await bot.send_message(chat_id, html_text, parse_mode=ParseMode.HTML)
             return "Research delivered to user."
+        except TelegramForbiddenError:
+            raise
         except Exception as e:
             logger.warning("Failed to send HTML message, falling back to file: %s", e)
 
@@ -600,6 +603,8 @@ async def execute_tool(
         else:
             result = f"Unknown tool: {name}"
     except asyncio.CancelledError:
+        raise
+    except TelegramForbiddenError:
         raise
     except Exception as e:
         logger.exception("Tool %s execution error", name)

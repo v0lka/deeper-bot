@@ -310,6 +310,21 @@ class TestExecuteTool:
         assert "delivered" in msg["content"].lower()
         bot.send_message.assert_called()
 
+    async def test_telegram_forbidden_propagated(self, session, bot, settings):
+        """TelegramForbiddenError should propagate out of execute_tool, not be swallowed."""
+        from aiogram.exceptions import TelegramForbiddenError
+
+        tc = _make_tool_call("finish", {"result_markdown": "# Done"})
+        bot.send_message = AsyncMock(
+            side_effect=TelegramForbiddenError(
+                method=MagicMock(),
+                message="Forbidden: bot was blocked by the user",
+            )
+        )
+
+        with pytest.raises(TelegramForbiddenError):
+            await execute_tool(tc, session, bot, 123, settings)
+
 
 # ---------------------------------------------------------------------------
 # ask_user timeout state fix test

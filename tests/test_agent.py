@@ -243,3 +243,37 @@ class TestAgentLoop:
 
         assert session.todo_list is None
         assert session._status_announced is False
+
+
+class TestTelegramForbiddenHandling:
+    async def test_telegram_forbidden_handled_gracefully(self, session, bot, settings, session_store):
+        """TelegramForbiddenError should be handled gracefully without sending error messages."""
+        from aiogram.exceptions import TelegramForbiddenError
+
+        with patch("deeper_bot.agent.llm_call_with_retry", new_callable=AsyncMock) as mock_llm:
+            mock_llm.side_effect = TelegramForbiddenError(
+                method=MagicMock(),
+                message="Forbidden: bot was blocked by the user",
+            )
+            await run_agent(session, bot, 1, settings, session_store)
+
+        # Should NOT try to send the generic error message
+        for call in bot.send_message.call_args_list:
+            assert "unexpected error" not in call.args[1].lower()
+        assert session.state == SessionState.IDLE
+
+    async def test_keep_typing_handles_telegram_forbidden(self):
+        """_keep_typing should stop gracefully when bot is blocked."""
+        from aiogram.exceptions import TelegramForbiddenError
+        from deeper_bot.agent import _keep_typing
+
+        bot = AsyncMock()
+        bot.send_chat_action = AsyncMock(
+            side_effect=TelegramForbiddenError(
+                method=MagicMock(),
+                message="Forbidden: bot was blocked by the user",
+            )
+        )
+
+        await _keep_typing(bot, 1)
+        bot.send_chat_action.assert_called_once()

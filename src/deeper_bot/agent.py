@@ -5,6 +5,7 @@ import logging
 import litellm
 from aiogram import Bot
 from aiogram.enums import ChatAction, ParseMode
+from aiogram.exceptions import TelegramForbiddenError
 from aiogram.types import BufferedInputFile
 
 from deeper_bot.compaction import compact_context
@@ -26,6 +27,8 @@ async def _keep_typing(bot: Bot, chat_id: int) -> None:
         while True:
             await bot.send_chat_action(chat_id, ChatAction.TYPING)
             await asyncio.sleep(4)
+    except TelegramForbiddenError:
+        logger.info("Bot was blocked by user, stopping typing indicator for chat_id=%d", chat_id)
     except asyncio.CancelledError:
         pass
 
@@ -42,6 +45,8 @@ async def run_agent(
         await _agent_loop(session, bot, chat_id, settings, session_store)
     except asyncio.CancelledError:
         logger.info("Agent loop cancelled for chat_id=%d", chat_id)
+    except TelegramForbiddenError:
+        logger.info("Bot was blocked by user in chat_id=%d, stopping session.", chat_id)
     except Exception:
         logger.exception("Unhandled error in agent loop for chat_id=%d", chat_id)
         with contextlib.suppress(Exception):
