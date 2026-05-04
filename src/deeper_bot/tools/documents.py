@@ -140,6 +140,7 @@ async def _summarize_document(content: str, settings: Settings) -> str | None:
                     {"role": "system", "content": _SUMMARIZATION_PROMPT},
                     {"role": "user", "content": wrap_untrusted_content(content, "document")},
                 ],
+                use_reasoning=False,
             )
         )
         return response.choices[0].message.content or None

@@ -53,6 +53,7 @@ def build_llm_kwargs(
     model: str | None = None,
     messages: list[dict[str, Any]],
     temperature: float | None = None,
+    use_reasoning: bool = True,
     **overrides: Any,
 ) -> dict[str, Any]:
     """Build a kwargs dict for ``llm_call_with_retry``.
@@ -62,6 +63,8 @@ def build_llm_kwargs(
         model: Override the model name (defaults to ``settings.llm_model``).
         messages: The message list for the LLM call.
         temperature: Override the temperature (defaults to ``settings.llm_temperature``).
+        use_reasoning: Whether reasoning effort may be applied. Defaults to ``True``.
+            Utility summarization calls should pass ``False``.
         **overrides: Extra kwargs merged into the result (e.g. ``tools``, ``max_tokens``).
     """
     kwargs: dict[str, Any] = {
@@ -70,9 +73,7 @@ def build_llm_kwargs(
         "api_base": settings.llm_base_url,
         "api_key": settings.resolved_llm_api_key,
     }
-    # Reasoning effort is only applicable for primary-model agent calls,
-    # not utility summarization calls which set max_tokens.
-    will_use_reasoning = settings.llm_use_reasoning and "max_tokens" not in overrides
+    will_use_reasoning = settings.llm_use_reasoning and use_reasoning
     if will_use_reasoning:
         kwargs["reasoning_effort"] = settings.llm_reasoning_effort
     else:

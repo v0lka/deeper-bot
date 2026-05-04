@@ -113,11 +113,10 @@ class TestBuildLlmKwargs:
         result = build_llm_kwargs(settings, messages=[])
         assert result["reasoning_effort"] == "medium"
 
-    def test_reasoning_effort_suppressed_with_max_tokens(self):
+    def test_reasoning_effort_suppressed_when_use_reasoning_false(self):
         settings = self._make_settings(use_reasoning=True)
-        result = build_llm_kwargs(settings, messages=[], max_tokens=1000)
+        result = build_llm_kwargs(settings, messages=[], use_reasoning=False)
         assert "reasoning_effort" not in result
-        assert result["max_tokens"] == 1000
 
     def test_reasoning_effort_absent_when_disabled(self):
         settings = self._make_settings(use_reasoning=False)
@@ -158,8 +157,8 @@ class TestBuildLlmKwargs:
         assert result["temperature"] == 0.6
         assert "reasoning_effort" not in result
 
-    def test_temperature_included_with_max_tokens(self):
+    def test_temperature_included_when_use_reasoning_false(self):
         settings = self._make_settings(use_reasoning=True)
-        result = build_llm_kwargs(settings, messages=[], max_tokens=500)
+        result = build_llm_kwargs(settings, messages=[], use_reasoning=False)
         assert result["temperature"] == 0.6
         assert "reasoning_effort" not in result

@@ -733,8 +733,8 @@ class TestWebFetchFileConversion:
 
     async def test_conversion_error_returns_wrapped_error(self, fetch_session, settings):
         """If convert_file raises, should return a wrapped error message."""
-        from deeper_bot.tools import _web_fetch
         from deeper_bot.converter import ConversionError
+        from deeper_bot.tools import _web_fetch
 
         with (
             self._mock_http_stream(content_type="application/pdf"),
