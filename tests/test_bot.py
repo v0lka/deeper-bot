@@ -212,6 +212,8 @@ class TestFormatUserContent:
         assert "---" in result
         assert "report.pdf" in result
         assert "# Content" in result
+        assert "<untrusted-content" in result
+        assert "</untrusted-content>" in result
 
     def test_file_without_caption(self):
         result = _format_user_content("", "# Content", "data.csv")
@@ -219,11 +221,13 @@ class TestFormatUserContent:
         assert "data.csv" in result
         assert "# Content" in result
         assert "---" not in result
+        assert "<untrusted-content" in result
 
     def test_whitespace_only_caption_treated_as_empty(self):
         result = _format_user_content("   ", "# Content", "file.txt")
         assert result.startswith("Attached file:")
         assert "---" not in result
+        assert "<untrusted-content" in result
 
 
 # ---------------------------------------------------------------------------
@@ -641,3 +645,107 @@ class TestActiveTasksCleanup:
             await task
         bot_state.active_tasks.pop(chat_id, None)
         assert chat_id not in bot_state.active_tasks
+
+
+# ---------------------------------------------------------------------------
+# Security: domain extraction and clear tests
+# ---------------------------------------------------------------------------
+
+
+class TestSecurityDomainTracking:
+    async def test_user_url_populates_allowed_domains(self, store, bot, bot_state):
+        """URLs in user messages should be extracted and added to allowed_domains."""
+        session = await store.get_or_create(42)
+        async with session.lock:
+            session.messages = [{"role": "system", "content": "sys"}]
+            session.research_start_idx = 1
+            session.state = SessionState.IDLE
+            await store.save(session)
+
+        msg = make_message(42, "Check https://example.com/article")
+
+        async def fake_run_agent(*args, **kwargs):
+            pass
+
+        with patch("deeper_bot.bot.run_agent", side_effect=fake_run_agent):
+            await _handle_user_input(
+                42,
+                "Check https://example.com/article",
+                has_files=False,
+                text_present=True,
+                message=msg,
+                session_store=store,
+                settings=MagicMock(),
+                bot=bot,
+                bot_state=bot_state,
+            )
+
+        session = await store.get_or_create(42)
+        assert "example.com" in session.allowed_domains
+
+    async def test_clear_resets_allowed_domains(self, store, bot_state):
+        """clear_session should reset allowed_domains to empty set."""
+        session = await store.get_or_create(42)
+        session.allowed_domains = {"example.com", "python.org"}
+        await store.save(session)
+
+        msg = make_message(42, "/clear")
+        await clear_session(msg, store, bot_state)
+
+        assert session.allowed_domains == set()
+
+    async def test_awaiting_answer_url_populates_domains(self, store, bot, bot_state):
+        """URLs in user replies to ask_user should be added to allowed_domains."""
+        session = await store.get_or_create(42)
+        loop = asyncio.get_running_loop()
+        future = loop.create_future()
+        session.set_awaiting_answer(future)
+
+        msg = make_message(42, "Check https://docs.python.org/3/")
+        await _handle_user_input(
+            42,
+            "Check https://docs.python.org/3/",
+            has_files=False,
+            text_present=True,
+            message=msg,
+            session_store=store,
+            settings=MagicMock(),
+            bot=bot,
+            bot_state=bot_state,
+        )
+
+        assert "python.org" in session.allowed_domains
+        assert future.result() == "Check https://docs.python.org/3/"
+
+    async def test_new_research_resets_allowed_domains(self, store, bot, bot_state):
+        """Starting a new research session should reset allowed_domains."""
+        session = await store.get_or_create(42)
+        async with session.lock:
+            session.messages = [{"role": "system", "content": "sys"}]
+            session.research_start_idx = 1
+            session.state = SessionState.IDLE
+            session.allowed_domains = {"old-domain.com", "stale.org"}
+            await store.save(session)
+
+        msg = make_message(42, "Research https://new-domain.com/topic")
+
+        async def fake_run_agent(*args, **kwargs):
+            pass
+
+        with patch("deeper_bot.bot.run_agent", side_effect=fake_run_agent):
+            await _handle_user_input(
+                42,
+                "Research https://new-domain.com/topic",
+                has_files=False,
+                text_present=True,
+                message=msg,
+                session_store=store,
+                settings=MagicMock(),
+                bot=bot,
+                bot_state=bot_state,
+            )
+
+        session = await store.get_or_create(42)
+        assert "new-domain.com" in session.allowed_domains
+        assert "old-domain.com" not in session.allowed_domains
+        assert "stale.org" not in session.allowed_domains

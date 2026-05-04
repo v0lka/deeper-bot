@@ -15,6 +15,7 @@ from deeper_bot.compaction import compact_context
 from deeper_bot.config import Settings
 from deeper_bot.converter import ConversionError, UnsupportedFileError, convert_file, is_supported
 from deeper_bot.prompts import SYSTEM_PROMPT
+from deeper_bot.security import extract_domains_from_text, wrap_untrusted_content
 from deeper_bot.session import SessionState, SessionStore
 from deeper_bot.tools import markdown_to_telegram_html
 
@@ -76,9 +77,10 @@ async def _extract_content(message: Message, bot: Bot) -> tuple[str, str | None,
 def _format_user_content(text: str, file_markdown: str, filename: str) -> str:
     """Format user message content with attached file."""
     header = f"Attached file: `{filename}`"
+    wrapped = wrap_untrusted_content(file_markdown, "document", filename=filename)
     if text.strip():
-        return f"{text}\n\n---\n\n{header}\n\n{file_markdown}"
-    return f"{header}\n\n{file_markdown}"
+        return f"{text}\n\n---\n\n{header}\n\n{wrapped}"
+    return f"{header}\n\n{wrapped}"
 
 
 async def _handle_user_input(
@@ -103,6 +105,7 @@ async def _handle_user_input(
     # after the lock is released and the agent task is created below.
     async with session.lock:
         if session.state == SessionState.AWAITING_ANSWER:
+            session.allowed_domains.update(extract_domains_from_text(user_content))
             session.resolve_answer(user_content)
             return
 
@@ -119,8 +122,9 @@ async def _handle_user_input(
             session.messages = [{"role": "system", "content": SYSTEM_PROMPT}]
             session.research_start_idx = 1
 
+        session.allowed_domains = set()
         session.messages.append({"role": "user", "content": user_content})
-
+        session.allowed_domains.update(extract_domains_from_text(user_content))
         if session.research_start_idx >= len(session.messages):
             session.research_start_idx = len(session.messages) - 1
 
@@ -220,7 +224,8 @@ async def _process_media_group(
     if caption:
         parts.append(caption)
     for filename, file_markdown in file_parts:
-        parts.append(f"\n\n---\n\nAttached file: `{filename}`\n\n{file_markdown}")
+        wrapped = wrap_untrusted_content(file_markdown, "document", filename=filename)
+        parts.append(f"\n\n---\n\nAttached file: `{filename}`\n\n{wrapped}")
     user_content = "".join(parts)
 
     await _handle_user_input(
@@ -279,6 +284,7 @@ async def clear_session(message: Message, session_store: SessionStore, bot_state
 
         session.messages = []
         session.research_start_idx = 0
+        session.allowed_domains = set()
         session.state = SessionState.IDLE
         await session_store.save(session)
 

@@ -15,6 +15,7 @@ class TestSessionStateMachine:
         assert s.state == SessionState.IDLE
         assert s.messages == []
         assert s.research_start_idx == 0
+        assert s.allowed_domains == set()
         assert s.language_code is None
         assert s.todo_list is None
         assert s.status_announced is False
@@ -133,6 +134,7 @@ class TestSessionStore:
         session.initialized = True
         session.status_announced = True
         session.language_code = "ru"
+        session.allowed_domains = {"example.com", "python.org"}
         await store1.save(session)
         await store1.close()
 
@@ -149,6 +151,7 @@ class TestSessionStore:
         assert reloaded.initialized is True
         assert reloaded.status_announced is True
         assert reloaded.language_code == "ru"
+        assert reloaded.allowed_domains == {"example.com", "python.org"}
         await store2.close()
 
     async def test_delete(self, store):
@@ -215,6 +218,7 @@ class TestSessionStore:
         assert reloaded.initialized is False
         assert reloaded.status_announced is False
         assert reloaded.language_code is None
+        assert reloaded.allowed_domains == set()
 
         reloaded.todo_list = "plan"
         reloaded.initialized = True

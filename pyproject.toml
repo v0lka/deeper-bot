@@ -17,6 +17,7 @@ dependencies = [
     "aiosqlite>=0.21,<1",
     "mistune>=3.0,<4",
     "markitdown[pdf,docx,xlsx,pptx]>=0.1,<1",
+    "tldextract>=5.1,<6",
 ]
 
 [project.optional-dependencies]
