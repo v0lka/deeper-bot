@@ -61,10 +61,11 @@ class TestWhitelistMiddleware:
 
 class TestHandlers:
     async def test_clear_resets_session(self, store, bot_state):
-        """clear_session should reset messages, index, and reply 'Context cleared'."""
+        """clear_session should reset messages, index, initialized, and reply 'Context cleared'."""
         session = await store.get_or_create(42)
         session.messages = [{"role": "system", "content": "sys"}, {"role": "user", "content": "hi"}]
         session.research_start_idx = 2
+        session.initialized = True
         await store.save(session)
 
         msg = make_message(42, "/clear")
@@ -72,6 +73,7 @@ class TestHandlers:
 
         assert session.messages == []
         assert session.research_start_idx == 0
+        assert session.initialized is False
         assert session.state == SessionState.IDLE
         cast(AsyncMock, msg.answer).assert_awaited_once()
         reply_html = cast(AsyncMock, msg.answer).call_args[0][0]

@@ -297,6 +297,7 @@ async def clear_session(message: Message, session_store: SessionStore, bot_state
         session.messages = []
         session.research_start_idx = 0
         session.allowed_domains = set()
+        session.initialized = False
         session.state = SessionState.IDLE
         await session_store.save(session)
 
