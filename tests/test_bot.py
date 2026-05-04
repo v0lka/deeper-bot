@@ -17,6 +17,7 @@ from deeper_bot.bot import (
     clear_session,
     compact_session,
     show_status,
+    stop_session,
 )
 from deeper_bot.session import SessionState
 
@@ -76,10 +77,11 @@ class TestHandlers:
         reply_html = cast(AsyncMock, msg.answer).call_args[0][0]
         assert "Context cleared" in reply_html
 
-    async def test_clear_cancels_active_task(self, store, bot_state):
-        """clear_session should cancel any active task for the chat."""
+    async def test_clear_during_research_blocked(self, store, bot_state):
+        """clear_session should refuse to clear when a research session is active."""
         session = await store.get_or_create(42)
         session.state = SessionState.RESEARCHING
+        session.messages = [{"role": "system", "content": "sys"}, {"role": "user", "content": "hi"}]
         await store.save(session)
 
         fake_task = MagicMock()
@@ -89,8 +91,62 @@ class TestHandlers:
         msg = make_message(42, "/clear")
         await clear_session(msg, store, bot_state)
 
+        # Should not cancel or clear anything
+        fake_task.cancel.assert_not_called()
+        assert session.messages != []
+        assert session.state == SessionState.RESEARCHING
+        cast(AsyncMock, msg.answer).assert_awaited_once()
+        reply_html = cast(AsyncMock, msg.answer).call_args[0][0]
+        assert "Cannot clear context" in reply_html
+
+    async def test_stop_cancels_active_task(self, store, bot_state):
+        """stop_session should cancel any active task for the chat."""
+        session = await store.get_or_create(42)
+        session.state = SessionState.RESEARCHING
+        await store.save(session)
+
+        fake_task = MagicMock()
+        fake_task.done.return_value = False
+        bot_state.active_tasks[42] = fake_task
+
+        msg = make_message(42, "/stop")
+        await stop_session(msg, store, bot_state)
+
         fake_task.cancel.assert_called_once()
         assert 42 not in bot_state.active_tasks
+        assert session.state == SessionState.IDLE
+        cast(AsyncMock, msg.answer).assert_awaited_once()
+        reply_html = cast(AsyncMock, msg.answer).call_args[0][0]
+        assert "Research session stopped" in reply_html
+
+    async def test_stop_preserves_context(self, store, bot_state):
+        """stop_session should preserve messages and research_start_idx."""
+        session = await store.get_or_create(42)
+        session.state = SessionState.RESEARCHING
+        session.messages = [{"role": "system", "content": "sys"}, {"role": "user", "content": "hi"}]
+        session.research_start_idx = 1
+        session.allowed_domains = {"example.com"}
+        await store.save(session)
+
+        msg = make_message(42, "/stop")
+        await stop_session(msg, store, bot_state)
+
+        assert session.messages == [{"role": "system", "content": "sys"}, {"role": "user", "content": "hi"}]
+        assert session.research_start_idx == 1
+        assert session.allowed_domains == {"example.com"}
+        assert session.state == SessionState.IDLE
+
+    async def test_stop_when_idle(self, store, bot_state):
+        """stop_session when IDLE should inform user there is nothing to stop."""
+        session = await store.get_or_create(42)
+        assert session.state == SessionState.IDLE
+
+        msg = make_message(42, "/stop")
+        await stop_session(msg, store, bot_state)
+
+        cast(AsyncMock, msg.answer).assert_awaited_once()
+        reply_html = cast(AsyncMock, msg.answer).call_args[0][0]
+        assert "No active research session" in reply_html
 
     async def test_message_during_research_gets_wait_reply(self, store, bot, bot_state):
         """User messages during RESEARCHING state should get a 'please wait' reply."""

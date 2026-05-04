@@ -271,11 +271,23 @@ class WhitelistMiddleware(BaseMiddleware):
 # ---------------------------------------------------------------------------
 
 
+CLEAR_BLOCKED_MSG = (
+    "Cannot clear context while a research session is active. Use /stop to stop the current session first."
+)
+
+
 async def clear_session(message: Message, session_store: SessionStore, bot_state: BotState) -> None:
-    """Clear session state, cancel active tasks, and reset context."""
+    """Clear session state, cancel active tasks, and reset context.
+
+    Refuses to clear if a research session is currently active.
+    """
     chat_id = message.chat.id
     session = await session_store.get_or_create(chat_id)
     async with session.lock:
+        if session.state != SessionState.IDLE:
+            await message.answer(markdown_to_telegram_html(CLEAR_BLOCKED_MSG), parse_mode=ParseMode.HTML)
+            return
+
         task = bot_state.active_tasks.pop(chat_id, None)
         if task and not task.done():
             task.cancel()
@@ -289,6 +301,33 @@ async def clear_session(message: Message, session_store: SessionStore, bot_state
         await session_store.save(session)
 
     await message.answer(markdown_to_telegram_html("Context cleared."), parse_mode=ParseMode.HTML)
+
+
+async def stop_session(message: Message, session_store: SessionStore, bot_state: BotState) -> None:
+    """Stop the current research session without clearing context."""
+    chat_id = message.chat.id
+    session = await session_store.get_or_create(chat_id)
+    async with session.lock:
+        if session.state == SessionState.IDLE:
+            await message.answer(
+                markdown_to_telegram_html("No active research session to stop."),
+                parse_mode=ParseMode.HTML,
+            )
+            return
+
+        task = bot_state.active_tasks.pop(chat_id, None)
+        if task and not task.done():
+            task.cancel()
+        session.cancel_pending()
+        session.clear_status()
+
+        session.state = SessionState.IDLE
+        await session_store.save(session)
+
+    await message.answer(
+        markdown_to_telegram_html("Research session stopped. Context is preserved."),
+        parse_mode=ParseMode.HTML,
+    )
 
 
 async def compact_session(message: Message, session_store: SessionStore, settings: Settings) -> None:
@@ -329,6 +368,10 @@ def create_router() -> Router:
     @router.message(Command("clear"))
     async def handle_clear(message: Message, session_store: SessionStore, bot_state: BotState, **kwargs: Any) -> None:
         await clear_session(message, session_store, bot_state)
+
+    @router.message(Command("stop"))
+    async def handle_stop(message: Message, session_store: SessionStore, bot_state: BotState, **kwargs: Any) -> None:
+        await stop_session(message, session_store, bot_state)
 
     @router.message(Command("compact"))
     async def handle_compact(message: Message, session_store: SessionStore, settings: Settings, **kwargs: Any) -> None:
@@ -405,6 +448,7 @@ async def on_startup(bot: Bot) -> None:
     await bot.set_my_commands(
         [
             BotCommand(command="clear", description="Clear context"),
+            BotCommand(command="stop", description="Stop current research"),
             BotCommand(command="compact", description="Compact context"),
             BotCommand(command="status", description="Show current research progress"),
         ]
