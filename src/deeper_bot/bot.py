@@ -15,9 +15,10 @@ from deeper_bot.compaction import compact_context
 from deeper_bot.config import Settings
 from deeper_bot.converter import ConversionError, UnsupportedFileError, convert_file, is_supported
 from deeper_bot.prompts import SYSTEM_PROMPT
-from deeper_bot.security import extract_domains_from_text, wrap_untrusted_content
+from deeper_bot.security import extract_domains_from_text
 from deeper_bot.session import SessionState, SessionStore
 from deeper_bot.tools import markdown_to_telegram_html
+from deeper_bot.tools.documents import clear_session_documents, format_document_response
 
 logger = logging.getLogger(__name__)
 
@@ -74,13 +75,12 @@ async def _extract_content(message: Message, bot: Bot) -> tuple[str, str | None,
     return None
 
 
-def _format_user_content(text: str, file_markdown: str, filename: str) -> str:
+def _format_user_content(text: str, file_response: str, filename: str) -> str:
     """Format user message content with attached file."""
     header = f"Attached file: `{filename}`"
-    wrapped = wrap_untrusted_content(file_markdown, "document", filename=filename)
     if text.strip():
-        return f"{text}\n\n---\n\n{header}\n\n{wrapped}"
-    return f"{header}\n\n{wrapped}"
+        return f"{text}\n\n---\n\n{header}\n\n{file_response}"
+    return f"{header}\n\n{file_response}"
 
 
 async def _handle_user_input(
@@ -224,8 +224,8 @@ async def _process_media_group(
     if caption:
         parts.append(caption)
     for filename, file_markdown in file_parts:
-        wrapped = wrap_untrusted_content(file_markdown, "document", filename=filename)
-        parts.append(f"\n\n---\n\nAttached file: `{filename}`\n\n{wrapped}")
+        doc_response = await format_document_response(file_markdown, chat_id, "document", settings, filename=filename)
+        parts.append(f"\n\n---\n\nAttached file: `{filename}`\n\n{doc_response}")
     user_content = "".join(parts)
 
     await _handle_user_input(
@@ -300,6 +300,7 @@ async def clear_session(message: Message, session_store: SessionStore, bot_state
         session.state = SessionState.IDLE
         await session_store.save(session)
 
+    await clear_session_documents(chat_id)
     await message.answer(markdown_to_telegram_html("Context cleared."), parse_mode=ParseMode.HTML)
 
 
@@ -424,8 +425,15 @@ def create_router() -> Router:
             return
 
         text, file_markdown, filename = result
-        user_content = _format_user_content(text, file_markdown, filename) if file_markdown and filename else text
-        has_files = file_markdown is not None and filename is not None
+        if file_markdown and filename:
+            file_response = await format_document_response(
+                file_markdown, chat_id, "document", settings, filename=filename
+            )
+            user_content = _format_user_content(text, file_response, filename)
+            has_files = True
+        else:
+            user_content = text
+            has_files = False
         text_present = bool(text and text.strip())
 
         await _handle_user_input(

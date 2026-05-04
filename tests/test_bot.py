@@ -77,6 +77,23 @@ class TestHandlers:
         reply_html = cast(AsyncMock, msg.answer).call_args[0][0]
         assert "Context cleared" in reply_html
 
+    async def test_clear_deletes_document_cache(self, store, bot_state):
+        """clear_session should delete cached documents for the chat."""
+        from deeper_bot.tools.documents import save_document
+
+        await save_document("cached content", 42)
+
+        session = await store.get_or_create(42)
+        session.state = SessionState.IDLE
+        await store.save(session)
+
+        msg = make_message(42, "/clear")
+        await clear_session(msg, store, bot_state)
+
+        from deeper_bot.tools.documents import _get_session_cache_dir
+
+        assert not _get_session_cache_dir(42).exists()
+
     async def test_clear_during_research_blocked(self, store, bot_state):
         """clear_session should refuse to clear when a research session is active."""
         session = await store.get_or_create(42)
@@ -268,8 +285,6 @@ class TestFormatUserContent:
         assert "---" in result
         assert "report.pdf" in result
         assert "# Content" in result
-        assert "<untrusted-content" in result
-        assert "</untrusted-content>" in result
 
     def test_file_without_caption(self):
         result = _format_user_content("", "# Content", "data.csv")
@@ -277,13 +292,11 @@ class TestFormatUserContent:
         assert "data.csv" in result
         assert "# Content" in result
         assert "---" not in result
-        assert "<untrusted-content" in result
 
     def test_whitespace_only_caption_treated_as_empty(self):
         result = _format_user_content("   ", "# Content", "file.txt")
         assert result.startswith("Attached file:")
         assert "---" not in result
-        assert "<untrusted-content" in result
 
 
 # ---------------------------------------------------------------------------

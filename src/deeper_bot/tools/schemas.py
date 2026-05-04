@@ -43,6 +43,40 @@ TOOLS: list[dict] = [
     {
         "type": "function",
         "function": {
+            "name": "read_document",
+            "description": (
+                "Read a fragment of a previously fetched web page or uploaded document by its numeric ID."
+                " Use when you need to examine specific sections of cached content in full detail."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "integer",
+                        "description": (
+                            "Numeric document ID from the footer of a web_fetch result or uploaded document."
+                        ),
+                    },
+                    "start_line": {
+                        "type": "integer",
+                        "description": "Line number to start from (1-based).",
+                        "default": 1,
+                        "minimum": 1,
+                    },
+                    "lines_count": {
+                        "type": "integer",
+                        "description": "Number of lines to read. Values over 500 are capped to 500.",
+                        "default": 500,
+                        "minimum": 1,
+                    },
+                },
+                "required": ["id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "ask_user",
             "description": (
                 "Ask the user a clarifying question and wait for their response."
@@ -114,6 +148,14 @@ class WebFetchArgs(BaseModel):
     url: str = Field(min_length=1)
 
 
+class ReadDocumentArgs(BaseModel):
+    """Arguments for the read_document tool."""
+
+    id: int = Field(ge=1)
+    start_line: int = Field(default=1, ge=1)
+    lines_count: int = Field(default=500, ge=1)
+
+
 class AskUserArgs(BaseModel):
     """Arguments for the ask_user tool."""
 
@@ -135,6 +177,7 @@ class SetStatusArgs(BaseModel):
 _TOOL_MODELS: dict[str, type[BaseModel]] = {
     "web_search": WebSearchArgs,
     "web_fetch": WebFetchArgs,
+    "read_document": ReadDocumentArgs,
     "ask_user": AskUserArgs,
     "finish": FinishArgs,
     "set_status": SetStatusArgs,

@@ -246,9 +246,9 @@ class TestPromptHardening:
         assert "untrusted-content" in SYSTEM_PROMPT
 
     def test_web_summarization_prompt(self):
-        from deeper_bot.tools.executor import _WEB_SUMMARIZATION_PROMPT
+        from deeper_bot.tools.documents import _SUMMARIZATION_PROMPT
 
-        assert "adversarial" in _WEB_SUMMARIZATION_PROMPT.lower() or "ignore" in _WEB_SUMMARIZATION_PROMPT.lower()
+        assert "adversarial" in _SUMMARIZATION_PROMPT.lower() or "ignore" in _SUMMARIZATION_PROMPT.lower()
 
     def test_report_summary_prompt(self):
         from deeper_bot.tools.executor import _REPORT_SUMMARY_PROMPT

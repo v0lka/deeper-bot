@@ -68,3 +68,9 @@ async def store(session_store):
 def bot_state():
     """Fresh BotState instance for each test."""
     return BotState()
+
+
+@pytest.fixture(autouse=True)
+def clean_document_cache(tmp_path, monkeypatch):
+    """Redirect document cache to a temp directory for isolation."""
+    monkeypatch.setattr("deeper_bot.tools.documents.DOCUMENT_CACHE_DIR", str(tmp_path / "cache"))

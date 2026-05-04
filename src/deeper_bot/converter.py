@@ -136,9 +136,6 @@ async def convert_file(data: BinaryIO, filename: str) -> str:
     except Exception as exc:
         raise ConversionError(f"Failed to convert {filename}: {exc}") from exc
 
-    if len(result) > MAX_FILE_CONTENT_LENGTH:
-        result = result[:MAX_FILE_CONTENT_LENGTH] + "\n\n[Content truncated at 100,000 characters]"
-
     return result
 
 

@@ -308,13 +308,13 @@ class TestConvertTimeout:
 # ---------------------------------------------------------------------------
 
 
-class TestConvertFileTruncation:
-    async def test_truncation_at_100k(self):
+class TestConvertFileNoTruncation:
+    async def test_large_file_not_truncated(self):
         content = "x" * (MAX_FILE_CONTENT_LENGTH + 1000)
         data = BytesIO(content.encode())
         result = await convert_file(data, "large.txt")
-        assert len(result) < len(content)
-        assert result.endswith("[Content truncated at 100,000 characters]")
+        assert result == content
+        assert "truncated" not in result
 
     async def test_exactly_100k_not_truncated(self):
         content = "x" * MAX_FILE_CONTENT_LENGTH

@@ -490,16 +490,16 @@ class TestWebFetchSummarization:
             self._mock_http_stream(),
             patch("deeper_bot.tools.executor.trafilatura.extract", return_value=long_content),
             patch(
-                "deeper_bot.tools.executor.llm_call_with_retry",
+                "deeper_bot.tools.documents.llm_call_with_retry",
                 new_callable=AsyncMock,
                 return_value=mock_llm_response,
             ),
         ):
             result = await _web_fetch("http://example.com", fetch_session, settings)
 
-        assert "Content summarized" in result
         assert summary_text in result
         assert "<untrusted-content" in result
+        assert "Document ID:" in result
 
     async def test_summarization_failure_falls_back_to_truncation(self, fetch_session, settings):
         """If LLM summarization fails, should fall back to truncation."""
@@ -511,7 +511,7 @@ class TestWebFetchSummarization:
             self._mock_http_stream(),
             patch("deeper_bot.tools.executor.trafilatura.extract", return_value=long_content),
             patch(
-                "deeper_bot.tools.executor.llm_call_with_retry",
+                "deeper_bot.tools.documents.llm_call_with_retry",
                 new_callable=AsyncMock,
                 side_effect=Exception("LLM error"),
             ),
@@ -520,6 +520,7 @@ class TestWebFetchSummarization:
 
         assert "Content truncated" in result
         assert "<untrusted-content" in result
+        assert "Document ID:" in result
 
     async def test_ssrf_blocked_returns_error_message(self, fetch_session, settings):
         """SSRF-blocked URL should return error string, not raise."""
@@ -792,13 +793,82 @@ class TestWebFetchFileConversion:
             self._mock_http_stream(content_type="application/pdf"),
             patch("deeper_bot.tools.executor.convert_file", new_callable=AsyncMock, return_value=long_text),
             patch(
-                "deeper_bot.tools.executor.llm_call_with_retry",
+                "deeper_bot.tools.documents.llm_call_with_retry",
                 new_callable=AsyncMock,
                 return_value=mock_llm_response,
             ),
         ):
             result = await _web_fetch("http://example.com/big.pdf", fetch_session, settings)
 
-        assert "Content summarized" in result
         assert summary_text in result
         assert "<untrusted-content" in result
+        assert "Document ID:" in result
+
+
+# ---------------------------------------------------------------------------
+# read_document tool tests
+# ---------------------------------------------------------------------------
+
+
+class TestReadDocument:
+    @pytest.fixture
+    def session(self):
+        return Session(chat_id=123)
+
+    async def test_read_document_not_found(self, session, bot, settings):
+        tc = make_tool_call("read_document", {"id": 999})
+        msg, is_finish = await execute_tool(tc, session, bot, 123, settings)
+        assert not is_finish
+        assert "not found" in msg["content"].lower()
+
+    async def test_read_document_valid(self, session, bot, settings):
+        from deeper_bot.tools.documents import save_document
+
+        content = "Line 1\nLine 2\nLine 3\nLine 4\nLine 5"
+        doc_id, _ = await save_document(content, 123)
+
+        tc = make_tool_call("read_document", {"id": doc_id, "start_line": 2, "lines_count": 2})
+        msg, is_finish = await execute_tool(tc, session, bot, 123, settings)
+
+        assert not is_finish
+        assert "Line 2" in msg["content"]
+        assert "Line 3" in msg["content"]
+        assert "Lines 2-3 of 5 total" in msg["content"]
+        assert "<untrusted-content" in msg["content"]
+
+    async def test_read_document_end_of_file(self, session, bot, settings):
+        from deeper_bot.tools.documents import save_document
+
+        content = "A\nB\nC"
+        doc_id, _ = await save_document(content, 123)
+
+        tc = make_tool_call("read_document", {"id": doc_id, "start_line": 2, "lines_count": 10})
+        msg, is_finish = await execute_tool(tc, session, bot, 123, settings)
+
+        assert not is_finish
+        assert "End of document" in msg["content"]
+        assert "Lines 2-3 of 3 total" in msg["content"]
+
+    async def test_read_document_lines_count_capped(self, session, bot, settings):
+        from deeper_bot.tools.documents import save_document
+
+        content = "\n".join(f"Line {i}" for i in range(1, 600))
+        doc_id, _ = await save_document(content, 123)
+
+        tc = make_tool_call("read_document", {"id": doc_id, "start_line": 1, "lines_count": 600})
+        msg, is_finish = await execute_tool(tc, session, bot, 123, settings)
+
+        assert not is_finish
+        assert "Truncated to 500 line limit" in msg["content"]
+
+    async def test_read_document_invalid_id_type(self, session, bot, settings):
+        tc = make_tool_call("read_document", {"id": "abc"})
+        msg, is_finish = await execute_tool(tc, session, bot, 123, settings)
+        assert not is_finish
+        assert "Invalid arguments" in msg["content"]
+
+    async def test_read_document_start_line_zero_rejected(self, session, bot, settings):
+        tc = make_tool_call("read_document", {"id": 1, "start_line": 0})
+        msg, is_finish = await execute_tool(tc, session, bot, 123, settings)
+        assert not is_finish
+        assert "Invalid arguments" in msg["content"]
