@@ -17,21 +17,21 @@ Key capabilities:
 
 ## Tech Stack
 
-| Layer               | Technology                              |
-| ------------------- | --------------------------------------- |
-| Language            | Python >= 3.14                          |
-| Telegram API        | aiogram 3.x (async)                     |
-| LLM Gateway         | litellm                                 |
-| Web Search          | DuckDuckGo Search (ddgs)                |
-| Content Extraction  | trafilatura                             |
-| Document Conversion | markitdown                              |
-| HTTP Client         | httpx with custom SSRF-safe transport   |
-| Configuration       | pydantic-settings                       |
-| Database            | aiosqlite (SQLite with WAL mode)        |
-| Markdown Processing | mistune (custom Telegram HTML renderer) |
-| Build Tool          | uv + hatchling                          |
-| Linting             | ruff                                    |
-| Testing             | pytest + pytest-asyncio                 |
+| Layer               | Technology                                                |
+| ------------------- | --------------------------------------------------------- |
+| Language            | Python >= 3.14                                            |
+| Telegram API        | aiogram 3.x (async)                                       |
+| LLM Gateway         | litellm                                                   |
+| Web Search          | DuckDuckGo Search (ddgs)                                  |
+| Content Extraction  | trafilatura                                               |
+| Document Conversion | pdfplumber / pypdf / python-docx / openpyxl / python-pptx |
+| HTTP Client         | httpx with custom SSRF-safe transport                     |
+| Configuration       | pydantic-settings                                         |
+| Database            | aiosqlite (SQLite with WAL mode)                          |
+| Markdown Processing | mistune (custom Telegram HTML renderer)                   |
+| Build Tool          | uv + hatchling                                            |
+| Linting             | ruff                                                      |
+| Testing             | pytest + pytest-asyncio                                   |
 
 ## Project Structure
 
@@ -43,7 +43,8 @@ src/deeper_bot/
 │                     # WhitelistMiddleware, content extraction from documents
 ├── compaction.py     # Context compaction: summarizes old conversation turns to free up context window
 ├── config.py         # Pydantic Settings with env var / .env loading, validation, API key resolution
-├── converter.py      # File-to-markdown conversion: markitdown for office docs, code blocks for code files, plain text
+├── converter.py      # File-to-markdown conversion: pdfplumber/pypdf for PDF, python-docx/openpyxl/python-pptx for Office,
+│                     # code blocks for code files, plain text. 30s timeout on all conversions.
 ├── llm.py            # LLM client wrapper with retry logic for transient errors
 ├── prompts.py        # SYSTEM_PROMPT — Tree of Thoughts research methodology and output format
 ├── session.py        # Session dataclass (state machine), SessionStore (SQLite + in-memory cache with eviction)

@@ -4,6 +4,9 @@ import asyncio
 import contextlib
 import json
 import logging
+import re
+import urllib.parse
+from io import BytesIO
 from typing import cast
 
 import httpx
@@ -16,6 +19,7 @@ from ddgs import DDGS
 from litellm.types.utils import ChatCompletionMessageToolCall
 
 from deeper_bot.config import Settings
+from deeper_bot.converter import ConversionError, UnsupportedFileError, convert_file
 from deeper_bot.llm import build_llm_kwargs, llm_call_with_retry
 from deeper_bot.security import (
     extract_domains_from_search_results,
@@ -41,6 +45,33 @@ MAX_FETCH_CONTENT_LENGTH = 15_000
 MAX_TELEGRAM_INLINE_LENGTH = 2000
 MAX_TELEGRAM_CAPTION_LENGTH = 1000
 MAX_DOWNLOAD_SIZE = 5_000_000
+
+# Content-Type → file extension for auto-conversion
+_CONVERTIBLE_CONTENT_TYPES: dict[str, str] = {
+    "application/pdf": ".pdf",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation": ".pptx",
+}
+
+_CONTENT_DISPOSITION_FILENAME_RE = re.compile(r'filename\*?=[\'"]?(?:[^\'";]*\'[^\'"]*\')?([^;\'"\r\n]+)')
+
+
+def _extract_filename_from_headers(headers: httpx.Headers, url: str) -> str:
+    """Try to extract a filename from Content-Disposition or URL path."""
+    content_disposition = headers.get("content-disposition", "")
+    match = _CONTENT_DISPOSITION_FILENAME_RE.search(content_disposition)
+    if match:
+        return urllib.parse.unquote(match.group(1).strip())
+
+    parsed = urllib.parse.urlparse(url)
+    path = urllib.parse.unquote(parsed.path)
+    if path:
+        name = path.split("/")[-1]
+        if name:
+            return name
+
+    return "downloaded_file"
 
 
 async def _web_search(query: str, session: Session, max_results: int = 5) -> str:
@@ -91,7 +122,7 @@ async def _web_fetch(url: str, session: Session, settings: Settings) -> str:
                 if total > MAX_DOWNLOAD_SIZE:
                     return f"Page too large to process (exceeded {MAX_DOWNLOAD_SIZE} bytes during download)."
                 chunks.append(chunk)
-            html = b"".join(chunks).decode("utf-8", errors="replace")
+            data = b"".join(chunks)
     except SSRFBlockedError as e:
         return str(e)
     except httpx.TimeoutException:
@@ -100,16 +131,32 @@ async def _web_fetch(url: str, session: Session, settings: Settings) -> str:
         logger.warning("web_fetch download error for %s: %s", url, e)
         return wrap_untrusted_content(f"Failed to fetch URL: {e}", "error")
 
-    if not html:
+    if not data:
         return "Could not download content from this URL."
 
-    try:
-        content = await asyncio.to_thread(
-            trafilatura.extract, html, output_format="markdown", include_links=True, include_tables=True
-        )
-    except Exception as e:
-        logger.warning("web_fetch extraction error for %s: %s", url, e)
-        return wrap_untrusted_content(f"Failed to extract content: {e}", "error")
+    content_type = response.headers.get("content-type", "").split(";")[0].strip().lower()
+    extension = _CONVERTIBLE_CONTENT_TYPES.get(content_type)
+
+    if extension:
+        filename = _extract_filename_from_headers(response.headers, url)
+        if not filename.endswith(extension):
+            filename = filename + extension
+        try:
+            content = await convert_file(BytesIO(data), filename)
+        except (UnsupportedFileError, ConversionError) as e:
+            logger.warning("web_fetch conversion error for %s: %s", url, e)
+            return wrap_untrusted_content(f"Failed to convert downloaded file: {e}", "error")
+    else:
+        html = data.decode("utf-8", errors="replace")
+        if not html:
+            return "Could not decode content from this URL."
+        try:
+            content = await asyncio.to_thread(
+                trafilatura.extract, html, output_format="markdown", include_links=True, include_tables=True
+            )
+        except Exception as e:
+            logger.warning("web_fetch extraction error for %s: %s", url, e)
+            return wrap_untrusted_content(f"Failed to extract content: {e}", "error")
 
     if not content:
         return "Could not extract meaningful content from this URL."
@@ -197,9 +244,7 @@ async def _generate_summary(report_markdown: str, settings: Settings) -> str:
                     {"role": "system", "content": _REPORT_SUMMARY_PROMPT},
                     {
                         "role": "user",
-                        "content": wrap_untrusted_content(
-                            strip_untrusted_tags(report_markdown), "research_report"
-                        ),
+                        "content": wrap_untrusted_content(strip_untrusted_tags(report_markdown), "research_report"),
                     },
                 ],
             )

@@ -1,6 +1,7 @@
 import socket
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 from helpers import make_tool_call
 
@@ -596,4 +597,208 @@ class TestWebFetchSummarization:
             result = await _web_fetch("https://www.google.com/search?q=test", session, settings)
 
         assert short_content in result
+        assert "<untrusted-content" in result
+
+
+# ---------------------------------------------------------------------------
+# web_fetch file auto-conversion tests
+# ---------------------------------------------------------------------------
+
+
+class TestWebFetchFileConversion:
+    @pytest.fixture
+    def fetch_session(self):
+        """Session with allowed_domains pre-populated so web_fetch doesn't block."""
+        s = Session(chat_id=1)
+        s.allowed_domains = {"example.com", "docs.example.com"}
+        return s
+
+    def _mock_http_stream(
+        self, data: bytes = b"fake file bytes", content_type: str | None = None, headers: dict | None = None
+    ):
+        """Return a context manager that patches _get_http_client for streaming."""
+        mock_response = AsyncMock()
+        mock_response.status_code = 200
+        mock_response.raise_for_status = MagicMock()
+        mock_response.headers = httpx.Headers(headers or {})
+        if content_type:
+            mock_response.headers["content-type"] = content_type
+
+        async def aiter_bytes():
+            yield data
+
+        mock_response.aiter_bytes = aiter_bytes
+        mock_response.__aenter__ = AsyncMock(return_value=mock_response)
+        mock_response.__aexit__ = AsyncMock(return_value=False)
+
+        mock_client = AsyncMock()
+        mock_client.stream = MagicMock(return_value=mock_response)
+        return patch("deeper_bot.tools.executor._get_http_client", return_value=mock_client)
+
+    async def test_pdf_content_type_calls_convert_file(self, fetch_session, settings):
+        """PDF content-type should trigger convert_file instead of trafilatura."""
+        from deeper_bot.tools import _web_fetch
+
+        with (
+            self._mock_http_stream(content_type="application/pdf"),
+            patch(
+                "deeper_bot.tools.executor.convert_file", new_callable=AsyncMock, return_value="PDF converted text"
+            ) as mock_convert,
+            patch("deeper_bot.tools.executor.trafilatura.extract") as mock_trafilatura,
+        ):
+            result = await _web_fetch("http://example.com/report.pdf", fetch_session, settings)
+
+        mock_convert.assert_awaited_once()
+        call_args = mock_convert.call_args.args
+        assert call_args[1].endswith(".pdf")
+        mock_trafilatura.assert_not_called()
+        assert "PDF converted text" in result
+        assert "<untrusted-content" in result
+
+    async def test_docx_content_type_calls_convert_file(self, fetch_session, settings):
+        """DOCX content-type should trigger convert_file."""
+        from deeper_bot.tools import _web_fetch
+
+        with (
+            self._mock_http_stream(
+                content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            ),
+            patch(
+                "deeper_bot.tools.executor.convert_file", new_callable=AsyncMock, return_value="DOCX content"
+            ) as mock_convert,
+            patch("deeper_bot.tools.executor.trafilatura.extract") as mock_trafilatura,
+        ):
+            result = await _web_fetch("http://example.com/doc", fetch_session, settings)
+
+        mock_convert.assert_awaited_once()
+        assert mock_convert.call_args.args[1].endswith(".docx")
+        mock_trafilatura.assert_not_called()
+        assert "DOCX content" in result
+
+    async def test_xlsx_content_type_calls_convert_file(self, fetch_session, settings):
+        """XLSX content-type should trigger convert_file."""
+        from deeper_bot.tools import _web_fetch
+
+        with (
+            self._mock_http_stream(content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
+            patch(
+                "deeper_bot.tools.executor.convert_file", new_callable=AsyncMock, return_value="XLSX content"
+            ) as mock_convert,
+            patch("deeper_bot.tools.executor.trafilatura.extract") as mock_trafilatura,
+        ):
+            result = await _web_fetch("http://example.com/data", fetch_session, settings)
+
+        mock_convert.assert_awaited_once()
+        assert mock_convert.call_args.args[1].endswith(".xlsx")
+        mock_trafilatura.assert_not_called()
+        assert "XLSX content" in result
+
+    async def test_pptx_content_type_calls_convert_file(self, fetch_session, settings):
+        """PPTX content-type should trigger convert_file."""
+        from deeper_bot.tools import _web_fetch
+
+        with (
+            self._mock_http_stream(
+                content_type="application/vnd.openxmlformats-officedocument.presentationml.presentation"
+            ),
+            patch(
+                "deeper_bot.tools.executor.convert_file", new_callable=AsyncMock, return_value="PPTX content"
+            ) as mock_convert,
+            patch("deeper_bot.tools.executor.trafilatura.extract") as mock_trafilatura,
+        ):
+            result = await _web_fetch("http://example.com/slides", fetch_session, settings)
+
+        mock_convert.assert_awaited_once()
+        assert mock_convert.call_args.args[1].endswith(".pptx")
+        mock_trafilatura.assert_not_called()
+        assert "PPTX content" in result
+
+    async def test_content_disposition_filename_used(self, fetch_session, settings):
+        """Filename from Content-Disposition header should be passed to convert_file."""
+        from deeper_bot.tools import _web_fetch
+
+        headers = {"content-disposition": 'attachment; filename="my report.pdf"'}
+        with (
+            self._mock_http_stream(content_type="application/pdf", headers=headers),
+            patch(
+                "deeper_bot.tools.executor.convert_file", new_callable=AsyncMock, return_value="text"
+            ) as mock_convert,
+        ):
+            result = await _web_fetch("http://example.com/download?id=123", fetch_session, settings)
+
+        mock_convert.assert_awaited_once()
+        assert mock_convert.call_args.args[1] == "my report.pdf"
+        assert "text" in result
+
+    async def test_conversion_error_returns_wrapped_error(self, fetch_session, settings):
+        """If convert_file raises, should return a wrapped error message."""
+        from deeper_bot.tools import _web_fetch
+        from deeper_bot.converter import ConversionError
+
+        with (
+            self._mock_http_stream(content_type="application/pdf"),
+            patch(
+                "deeper_bot.tools.executor.convert_file",
+                new_callable=AsyncMock,
+                side_effect=ConversionError("corrupted PDF"),
+            ),
+        ):
+            result = await _web_fetch("http://example.com/bad.pdf", fetch_session, settings)
+
+        assert "Failed to convert downloaded file" in result
+        assert "corrupted PDF" in result
+
+    async def test_no_content_type_uses_trafilatura(self, fetch_session, settings):
+        """Without a convertible content-type, trafilatura should still be used."""
+        from deeper_bot.tools import _web_fetch
+
+        short_content = "Normal HTML page."
+        with (
+            self._mock_http_stream(),
+            patch("deeper_bot.tools.executor.convert_file") as mock_convert,
+            patch("deeper_bot.tools.executor.trafilatura.extract", return_value=short_content),
+        ):
+            result = await _web_fetch("http://example.com/page", fetch_session, settings)
+
+        mock_convert.assert_not_called()
+        assert short_content in result
+        assert "<untrusted-content" in result
+
+    async def test_content_type_with_charset_ignored(self, fetch_session, settings):
+        """Content-Type like text/html; charset=utf-8 should not trigger conversion."""
+        from deeper_bot.tools import _web_fetch
+
+        short_content = "HTML content."
+        with (
+            self._mock_http_stream(content_type="text/html; charset=utf-8"),
+            patch("deeper_bot.tools.executor.convert_file") as mock_convert,
+            patch("deeper_bot.tools.executor.trafilatura.extract", return_value=short_content),
+        ):
+            result = await _web_fetch("http://example.com/page", fetch_session, settings)
+
+        mock_convert.assert_not_called()
+        assert short_content in result
+
+    async def test_converted_content_summarized_when_too_long(self, fetch_session, settings):
+        """Long converted content should also be summarized."""
+        from deeper_bot.tools import _web_fetch
+
+        long_text = "x" * 20_000
+        summary_text = "Short summary of long PDF."
+        mock_llm_response = MagicMock()
+        mock_llm_response.choices = [MagicMock(message=MagicMock(content=summary_text))]
+
+        with (
+            self._mock_http_stream(content_type="application/pdf"),
+            patch("deeper_bot.tools.executor.convert_file", new_callable=AsyncMock, return_value=long_text),
+            patch(
+                "deeper_bot.tools.executor.llm_call_with_retry",
+                new_callable=AsyncMock,
+                return_value=mock_llm_response,
+            ),
+        ):
+            result = await _web_fetch("http://example.com/big.pdf", fetch_session, settings)
+
+        assert "Content summarized" in result
+        assert summary_text in result
         assert "<untrusted-content" in result

@@ -15,21 +15,21 @@ A Telegram bot for deep research. The bot acts as a ReAct agent that can search 
 
 ## Tech Stack
 
-| Component           | Library                                                                                       |
-| ------------------- | --------------------------------------------------------------------------------------------- |
-| Telegram API        | [aiogram](https://docs.aiogram.dev/) 3.x                                                      |
-| LLM Gateway         | [litellm](https://docs.litellm.ai/)                                                           |
-| Web Search          | [DuckDuckGo Search (ddgs)](https://pypi.org/project/duckduckgo-search/)                       |
-| Content Extraction  | [trafilatura](https://trafilatura.readthedocs.io/)                                            |
-| Document Conversion | [markitdown](https://github.com/microsoft/markitdown)                                         |
-| HTTP Client         | [httpx](https://www.python-httpx.org/)                                                        |
-| Configuration       | [pydantic-settings](https://docs.pydantic.dev/latest/concepts/pydantic_settings/)             |
-| Database            | [aiosqlite](https://github.com/omnilib/aiosqlite) (SQLite)                                    |
-| Markdown            | [mistune](https://mistune.lepture.com/)                                                       |
-| Build Tool          | [uv](https://docs.astral.sh/uv/)                                                              |
-| Build Backend       | [hatchling](https://hatch.pypa.io/)                                                           |
-| Linting             | [ruff](https://docs.astral.sh/ruff/)                                                          |
-| Testing             | [pytest](https://docs.pytest.org/) + [pytest-asyncio](https://pytest-asyncio.readthedocs.io/) |
+| Component           | Library                                                                                                                                                                                                                                                                       |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Telegram API        | [aiogram](https://docs.aiogram.dev/) 3.x                                                                                                                                                                                                                                      |
+| LLM Gateway         | [litellm](https://docs.litellm.ai/)                                                                                                                                                                                                                                           |
+| Web Search          | [DuckDuckGo Search (ddgs)](https://pypi.org/project/duckduckgo-search/)                                                                                                                                                                                                       |
+| Content Extraction  | [trafilatura](https://trafilatura.readthedocs.io/)                                                                                                                                                                                                                            |
+| Document Conversion | [pdfplumber](https://github.com/jsvine/pdfplumber) / [pypdf](https://github.com/py-pdf/pypdf) / [python-docx](https://github.com/python-openxml/python-docx) / [openpyxl](https://foss.heptapod.net/openpyxl/openpyxl) / [python-pptx](https://github.com/scanny/python-pptx) |
+| HTTP Client         | [httpx](https://www.python-httpx.org/)                                                                                                                                                                                                                                        |
+| Configuration       | [pydantic-settings](https://docs.pydantic.dev/latest/concepts/pydantic_settings/)                                                                                                                                                                                             |
+| Database            | [aiosqlite](https://github.com/omnilib/aiosqlite) (SQLite)                                                                                                                                                                                                                    |
+| Markdown            | [mistune](https://mistune.lepture.com/)                                                                                                                                                                                                                                       |
+| Build Tool          | [uv](https://docs.astral.sh/uv/)                                                                                                                                                                                                                                              |
+| Build Backend       | [hatchling](https://hatch.pypa.io/)                                                                                                                                                                                                                                           |
+| Linting             | [ruff](https://docs.astral.sh/ruff/)                                                                                                                                                                                                                                          |
+| Testing             | [pytest](https://docs.pytest.org/) + [pytest-asyncio](https://pytest-asyncio.readthedocs.io/)                                                                                                                                                                                 |
 
 ## Prerequisites
 

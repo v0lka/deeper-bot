@@ -342,7 +342,7 @@ class TestExtractContent:
         with pytest.raises(UnsupportedFileError):
             await _extract_content(msg, AsyncMock())
 
-    async def test_pdf_delegates_to_markitdown(self):
+    async def test_pdf_delegates_to_pdfplumber(self):
         msg = make_document_message(1, "report.pdf")
         bot = AsyncMock()
         file_mock = MagicMock()
@@ -350,13 +350,15 @@ class TestExtractContent:
         bot.get_file.return_value = file_mock
         bot.download_file.return_value = BytesIO(b"fake pdf")
 
-        mock_result = MagicMock()
-        mock_result.text_content = "PDF content"
+        mock_page = MagicMock()
+        mock_page.extract_text.return_value = "PDF content"
 
-        mock_instance = MagicMock()
-        mock_instance.convert_stream.return_value = mock_result
+        mock_pdf = MagicMock()
+        mock_pdf.pages = [mock_page]
+        mock_pdf.__enter__ = MagicMock(return_value=mock_pdf)
+        mock_pdf.__exit__ = MagicMock(return_value=False)
 
-        with patch("deeper_bot.converter.MarkItDown", return_value=mock_instance):
+        with patch("deeper_bot.converter.pdfplumber.open", return_value=mock_pdf):
             result = await _extract_content(msg, bot)
 
         assert result is not None

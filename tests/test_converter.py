@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from deeper_bot.converter import (
+    CONVERSION_TIMEOUT_SECONDS,
     MAX_FILE_CONTENT_LENGTH,
     ConversionError,
     UnsupportedFileError,
@@ -108,49 +109,198 @@ class TestConvertCodeFile:
 
 
 # ---------------------------------------------------------------------------
-# convert_file — markitdown delegation
+# convert_file — PDF
 # ---------------------------------------------------------------------------
 
 
-class TestConvertWithMarkitdown:
-    async def test_pdf_delegates_to_markitdown(self):
-        mock_result = MagicMock()
-        mock_result.text_content = "# PDF Content\n\nExtracted text."
+class TestConvertPdf:
+    async def test_pdf_delegates_to_pdfplumber(self):
+        mock_page = MagicMock()
+        mock_page.extract_text.return_value = "Page one text"
 
-        mock_instance = MagicMock()
-        mock_instance.convert_stream.return_value = mock_result
+        mock_pdf = MagicMock()
+        mock_pdf.pages = [mock_page]
+        mock_pdf.__enter__ = MagicMock(return_value=mock_pdf)
+        mock_pdf.__exit__ = MagicMock(return_value=False)
 
-        with patch("deeper_bot.converter.MarkItDown", return_value=mock_instance):
+        with patch("deeper_bot.converter.pdfplumber.open", return_value=mock_pdf):
             data = BytesIO(b"fake pdf bytes")
             result = await convert_file(data, "report.pdf")
 
-        assert result == "# PDF Content\n\nExtracted text."
-        mock_instance.convert_stream.assert_called_once()
-        call_args = mock_instance.convert_stream.call_args
-        assert call_args[1]["file_extension"] == "pdf"
+        assert result == "Page one text"
 
-    async def test_docx_delegates_to_markitdown(self):
-        mock_result = MagicMock()
-        mock_result.text_content = "Word document content."
+    async def test_pdf_fallback_to_pypdf(self):
+        mock_page = MagicMock()
+        mock_page.extract_text.side_effect = RuntimeError("pdfplumber failed")
 
-        mock_instance = MagicMock()
-        mock_instance.convert_stream.return_value = mock_result
+        mock_pdf = MagicMock()
+        mock_pdf.pages = [mock_page]
+        mock_pdf.__enter__ = MagicMock(return_value=mock_pdf)
+        mock_pdf.__exit__ = MagicMock(return_value=False)
 
-        with patch("deeper_bot.converter.MarkItDown", return_value=mock_instance):
+        mock_pypdf_page = MagicMock()
+        mock_pypdf_page.extract_text.return_value = "Fallback text"
+        mock_reader = MagicMock()
+        mock_reader.pages = [mock_pypdf_page]
+
+        with (
+            patch("deeper_bot.converter.pdfplumber.open", return_value=mock_pdf),
+            patch("deeper_bot.converter.pypdf.PdfReader", return_value=mock_reader),
+        ):
+            data = BytesIO(b"fake pdf bytes")
+            result = await convert_file(data, "report.pdf")
+
+        assert result == "Fallback text"
+
+    async def test_pdf_failure_falls_back_to_pypdf(self):
+        mock_page = MagicMock()
+        mock_page.extract_text.side_effect = RuntimeError("pdfplumber failed")
+
+        mock_pdf = MagicMock()
+        mock_pdf.pages = [mock_page]
+        mock_pdf.__enter__ = MagicMock(return_value=mock_pdf)
+        mock_pdf.__exit__ = MagicMock(return_value=False)
+
+        mock_pypdf_page = MagicMock()
+        mock_pypdf_page.extract_text.return_value = "Fallback recovered text"
+        mock_reader = MagicMock()
+        mock_reader.pages = [mock_pypdf_page]
+
+        with (
+            patch("deeper_bot.converter.pdfplumber.open", return_value=mock_pdf),
+            patch("deeper_bot.converter.pypdf.PdfReader", return_value=mock_reader),
+            patch("deeper_bot.converter.logger") as mock_logger,
+        ):
+            data = BytesIO(b"bad data")
+            result = await convert_file(data, "broken.pdf")
+
+        assert result == "Fallback recovered text"
+        mock_logger.warning.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# convert_file — DOCX
+# ---------------------------------------------------------------------------
+
+
+class TestConvertDocx:
+    async def test_docx_delegates_to_python_docx(self):
+        mock_para = MagicMock()
+        mock_para.text = "Hello from Word"
+
+        mock_doc = MagicMock()
+        mock_doc.paragraphs = [mock_para]
+
+        with patch("deeper_bot.converter.Document", return_value=mock_doc):
             data = BytesIO(b"fake docx bytes")
             result = await convert_file(data, "document.docx")
 
-        assert result == "Word document content."
+        assert result == "Hello from Word"
 
-    async def test_markitdown_failure_raises_conversion_error(self):
-        mock_instance = MagicMock()
-        mock_instance.convert_stream.side_effect = RuntimeError("parse failed")
+    async def test_docx_empty_paragraphs_skipped(self):
+        mock_para_full = MagicMock()
+        mock_para_full.text = "Keep me"
+        mock_para_empty = MagicMock()
+        mock_para_empty.text = "   "
 
+        mock_doc = MagicMock()
+        mock_doc.paragraphs = [mock_para_full, mock_para_empty]
+
+        with patch("deeper_bot.converter.Document", return_value=mock_doc):
+            data = BytesIO(b"fake docx bytes")
+            result = await convert_file(data, "document.docx")
+
+        assert result == "Keep me"
+
+    async def test_docx_failure_raises_conversion_error(self):
         with (
-            patch("deeper_bot.converter.MarkItDown", return_value=mock_instance),
+            patch("deeper_bot.converter.Document", side_effect=RuntimeError("bad docx")),
             pytest.raises(ConversionError, match="Failed to convert"),
         ):
-            await convert_file(BytesIO(b"bad data"), "broken.pdf")
+            await convert_file(BytesIO(b"bad data"), "broken.docx")
+
+
+# ---------------------------------------------------------------------------
+# convert_file — XLSX
+# ---------------------------------------------------------------------------
+
+
+class TestConvertXlsx:
+    async def test_xlsx_delegates_to_openpyxl(self):
+        mock_sheet = MagicMock()
+        mock_sheet.title = "Sheet1"
+        mock_sheet.iter_rows.return_value = [
+            ("A", "B", "C"),
+            (1, 2, 3),
+        ]
+
+        mock_wb = MagicMock()
+        mock_wb.worksheets = [mock_sheet]
+
+        with patch("deeper_bot.converter.load_workbook", return_value=mock_wb):
+            data = BytesIO(b"fake xlsx bytes")
+            result = await convert_file(data, "data.xlsx")
+
+        assert "Sheet: Sheet1" in result
+        assert "A | B | C" in result
+        assert "1 | 2 | 3" in result
+
+    async def test_xlsx_failure_raises_conversion_error(self):
+        with (
+            patch("deeper_bot.converter.load_workbook", side_effect=RuntimeError("bad xlsx")),
+            pytest.raises(ConversionError, match="Failed to convert"),
+        ):
+            await convert_file(BytesIO(b"bad data"), "broken.xlsx")
+
+
+# ---------------------------------------------------------------------------
+# convert_file — PPTX
+# ---------------------------------------------------------------------------
+
+
+class TestConvertPptx:
+    async def test_pptx_delegates_to_python_pptx(self):
+        mock_shape = MagicMock()
+        mock_shape.text = "Slide content"
+
+        mock_slide = MagicMock()
+        mock_slide.shapes = [mock_shape]
+
+        mock_prs = MagicMock()
+        mock_prs.slides = [mock_slide]
+
+        with patch("deeper_bot.converter.Presentation", return_value=mock_prs):
+            data = BytesIO(b"fake pptx bytes")
+            result = await convert_file(data, "slides.pptx")
+
+        assert "Slide 1" in result
+        assert "Slide content" in result
+
+    async def test_pptx_failure_raises_conversion_error(self):
+        with (
+            patch("deeper_bot.converter.Presentation", side_effect=RuntimeError("bad pptx")),
+            pytest.raises(ConversionError, match="Failed to convert"),
+        ):
+            await convert_file(BytesIO(b"bad data"), "broken.pptx")
+
+
+# ---------------------------------------------------------------------------
+# convert_file — timeout
+# ---------------------------------------------------------------------------
+
+
+class TestConvertTimeout:
+    async def test_timeout_raises_conversion_error(self):
+        async def _slow(*_args, **_kwargs):
+            import asyncio
+
+            await asyncio.sleep(CONVERSION_TIMEOUT_SECONDS + 5)
+
+        with (
+            patch("deeper_bot.converter.asyncio.to_thread", side_effect=_slow),
+            pytest.raises(ConversionError, match="timed out"),
+        ):
+            await convert_file(BytesIO(b"data"), "report.pdf")
 
 
 # ---------------------------------------------------------------------------
