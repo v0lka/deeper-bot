@@ -156,8 +156,8 @@ def _convert_pdf(data: BinaryIO) -> str:
         pdf_stream.seek(0)
         reader = pypdf.PdfReader(pdf_stream)
         pages_text = []
-        for page in reader.pages:
-            text = page.extract_text()
+        for pypdf_page in reader.pages:
+            text = pypdf_page.extract_text()
             if text:
                 pages_text.append(text)
         return "\n\n".join(pages_text)

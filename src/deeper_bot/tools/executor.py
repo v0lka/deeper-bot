@@ -29,7 +29,7 @@ from deeper_bot.security import (
 )
 from deeper_bot.session import Session
 from deeper_bot.tools.documents import format_document_response, read_document_fragment
-from deeper_bot.tools.http import SSRFBlockedError, _get_http_client, _validate_url
+from deeper_bot.tools.http import SSRFBlockedError, _get_http_client, _http_request_scope, _validate_url
 from deeper_bot.tools.markdown import markdown_to_telegram_html
 from deeper_bot.tools.schemas import (
     AskUserArgs,
@@ -112,7 +112,7 @@ async def _web_fetch(url: str, session: Session, settings: Settings) -> str:
 
     client = await _get_http_client()
     try:
-        async with client.stream("GET", url) as response:
+        async with _http_request_scope(), client.stream("GET", url) as response:
             response.raise_for_status()
             content_length = response.headers.get("content-length")
             if content_length and int(content_length) > MAX_DOWNLOAD_SIZE:
@@ -152,10 +152,14 @@ async def _web_fetch(url: str, session: Session, settings: Settings) -> str:
         html = data.decode("utf-8", errors="replace")
         if not html:
             return "Could not decode content from this URL."
-        try:
-            content = await asyncio.to_thread(
-                trafilatura.extract, html, output_format="markdown", include_links=True, include_tables=True
+
+        def _extract_html(html_str: str) -> str:
+            return (
+                trafilatura.extract(html_str, output_format="markdown", include_links=True, include_tables=True) or ""
             )
+
+        try:
+            content = await asyncio.to_thread(_extract_html, html)
         except Exception as e:
             logger.warning("web_fetch extraction error for %s: %s", url, e)
             return wrap_untrusted_content(f"Failed to extract content: {e}", "error")

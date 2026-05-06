@@ -3,7 +3,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
-from helpers import make_tool_call
 
 from deeper_bot.session import Session, SessionState
 from deeper_bot.tools import (
@@ -14,6 +13,7 @@ from deeper_bot.tools import (
     execute_tool,
     markdown_to_telegram_html,
 )
+from tests.helpers import make_tool_call
 
 # ---------------------------------------------------------------------------
 # TelegramHTMLRenderer tests

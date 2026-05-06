@@ -47,3 +47,8 @@ convention = "google"
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 pythonpath = ["tests"]
+
+[dependency-groups]
+dev = [
+    "mypy>=1.20.2",
+]

@@ -14,7 +14,7 @@ class TelegramHTMLRenderer(mistune.HTMLRenderer):
     code, pre, a, blockquote, tg-spoiler.
     """
 
-    NAME = "telegram_html"
+    name = "telegram_html"
 
     def __init__(self) -> None:
         """Initialize the renderer with list tracking state."""

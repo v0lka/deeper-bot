@@ -6,7 +6,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from aiogram.types import Message
-from helpers import make_document_message, make_media_group_message, make_message
 
 from deeper_bot.bot import (
     WhitelistMiddleware,
@@ -20,6 +19,7 @@ from deeper_bot.bot import (
     stop_session,
 )
 from deeper_bot.session import SessionState
+from tests.helpers import make_document_message, make_media_group_message, make_message
 
 # ---------------------------------------------------------------------------
 # WhitelistMiddleware tests

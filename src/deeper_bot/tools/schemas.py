@@ -98,7 +98,8 @@ TOOLS: list[dict] = [
             "description": (
                 "Set or update the current research progress TODO list."
                 " Use Markdown checkboxes: '- [ ]' for pending, '- [x]' for done."
-                " Call as your FIRST action to announce the plan, then update as you complete steps."
+                " Call as your FIRST action to announce the plan, then report on"
+                " its progress as ANY of its steps are completed."
             ),
             "parameters": {
                 "type": "object",
