@@ -141,10 +141,10 @@ class TestSessionStore:
         # Reload from a fresh store
         store2 = SessionStore(db_path)
         await store2.init()
-        # init resets non-idle states
+        # init no longer resets non-idle states (recovery handles them)
         reloaded = await store2.get_or_create(42)
         assert reloaded.chat_id == 42
-        assert reloaded.state == SessionState.IDLE  # reset by init
+        assert reloaded.state == SessionState.RESEARCHING  # preserved for recovery
         assert reloaded.messages == [{"role": "system", "content": "hello"}]
         assert reloaded.research_start_idx == 1
         assert reloaded.todo_list == "- [ ] Step 1"
@@ -186,6 +186,51 @@ class TestSessionStore:
             store.get_or_create(999),
         )
         assert results[0] is results[1]
+
+    async def test_get_interrupted_chat_ids_returns_non_idle(self, store):
+        """get_interrupted_chat_ids should return sessions with non-idle state."""
+        s1 = await store.get_or_create(10)
+        s1.state = SessionState.RESEARCHING
+        await store.save(s1)
+
+        s2 = await store.get_or_create(20)
+        s2.state = SessionState.AWAITING_ANSWER
+        await store.save(s2)
+
+        s3 = await store.get_or_create(30)
+        s3.state = SessionState.IDLE
+        await store.save(s3)
+
+        interrupted = await store.get_interrupted_chat_ids()
+        assert set(interrupted) == {10, 20}
+
+    async def test_get_interrupted_chat_ids_empty_when_all_idle(self, store):
+        """get_interrupted_chat_ids should return empty list when all sessions are idle."""
+        for cid in (1, 2, 3):
+            s = await store.get_or_create(cid)
+            await store.save(s)
+
+        interrupted = await store.get_interrupted_chat_ids()
+        assert interrupted == []
+
+    async def test_init_preserves_non_idle_state(self, tmp_path):
+        """init() should NOT reset non-idle sessions (recovery handles them)."""
+        db_path = str(tmp_path / "preserve.db")
+        store1 = SessionStore(db_path)
+        await store1.init()
+
+        session = await store1.get_or_create(7)
+        session.state = SessionState.RESEARCHING
+        session.messages = [{"role": "system", "content": "test"}]
+        await store1.save(session)
+        await store1.close()
+
+        # Fresh store simulating restart
+        store2 = SessionStore(db_path)
+        await store2.init()
+        reloaded = await store2.get_or_create(7)
+        assert reloaded.state == SessionState.RESEARCHING
+        await store2.close()
 
     async def test_migration_adds_new_columns(self, tmp_path):
         """Old DB without new columns should migrate gracefully on init()."""

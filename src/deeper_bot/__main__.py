@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import sys
+from typing import Any
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
@@ -10,6 +11,7 @@ from aiogram.enums import ParseMode
 
 from deeper_bot.bot import BotState, create_router, on_startup, setup_router
 from deeper_bot.config import get_settings
+from deeper_bot.recovery import recover_sessions
 from deeper_bot.session import SessionStore
 from deeper_bot.tools import close_http_client
 
@@ -30,15 +32,20 @@ async def main() -> None:
     )
     dp = Dispatcher()
 
+    bot_state = BotState()
     dp["session_store"] = store
     dp["settings"] = settings
-    dp["bot_state"] = BotState()
+    dp["bot_state"] = bot_state
 
     router = create_router()
     setup_router(router, settings)
     dp.include_router(router)
 
-    dp.startup.register(on_startup)
+    async def _on_startup(bot: Bot, **kwargs: Any) -> None:
+        await on_startup(bot)
+        asyncio.create_task(recover_sessions(store, bot, settings, bot_state))
+
+    dp.startup.register(_on_startup)
 
     try:
         await dp.start_polling(bot)

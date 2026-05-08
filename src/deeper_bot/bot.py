@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -32,6 +33,23 @@ class BotState:
     active_tasks: dict[int, asyncio.Task] = field(default_factory=dict)
     media_group_buffers: dict[str, list[Message]] = field(default_factory=dict)
     media_group_timers: dict[str, asyncio.Task] = field(default_factory=dict)
+
+
+def make_task_done_callback(chat_id: int, bot_state: BotState) -> Callable[[asyncio.Task], None]:
+    """Create a done-callback that removes the task from active_tasks and logs errors."""
+
+    def _on_task_done(t: asyncio.Task) -> None:
+        try:
+            bot_state.active_tasks.pop(chat_id, None)
+            if t.cancelled():
+                return
+            exc = t.exception()
+            if exc:
+                logger.error("Agent task for chat_id=%d failed: %s", chat_id, exc)
+        except Exception:
+            logger.exception("Error in task done callback for chat_id=%d", chat_id)
+
+    return _on_task_done
 
 
 FILES_ADDED_MSG = "File added to context. Send your research question or instructions."
@@ -145,19 +163,7 @@ async def _handle_user_input(
 
         task = asyncio.create_task(run_agent(session, bot, chat_id, settings, session_store))
         bot_state.active_tasks[chat_id] = task
-
-        def _on_task_done(t: asyncio.Task) -> None:
-            try:
-                bot_state.active_tasks.pop(chat_id, None)
-                if t.cancelled():
-                    return
-                exc = t.exception()
-                if exc:
-                    logger.error("Agent task for chat_id=%d failed: %s", chat_id, exc)
-            except Exception:
-                logger.exception("Error in task done callback for chat_id=%d", chat_id)
-
-        task.add_done_callback(_on_task_done)
+        task.add_done_callback(make_task_done_callback(chat_id, bot_state))
 
 
 async def _process_media_group(

@@ -126,7 +126,7 @@ class SessionStore:
                 self._get_locks.pop(cid, None)
 
     async def init(self) -> None:
-        """Create the database and schema, and reset non-idle sessions to idle."""
+        """Create the database and schema."""
         Path(self._db_path).parent.mkdir(parents=True, exist_ok=True)
         self._db = await aiosqlite.connect(self._db_path)
         await self._db.execute("PRAGMA journal_mode=WAL")
@@ -157,9 +157,16 @@ class SessionStore:
                 if "duplicate column name" in str(e).lower():
                     continue
                 raise
-        await self._db.execute("UPDATE sessions SET state = 'idle' WHERE state != 'idle'")
         await self._db.commit()
         logger.info("Session store initialized: %s", self._db_path)
+
+    async def get_interrupted_chat_ids(self) -> list[int]:
+        """Return chat_ids of sessions that were not idle (interrupted by crash)."""
+        if self._db is None:
+            raise RuntimeError("SessionStore not initialized — call init() first")
+        async with self._db.execute("SELECT chat_id FROM sessions WHERE state != 'idle'") as cursor:
+            rows = await cursor.fetchall()
+        return [row[0] for row in rows]
 
     async def close(self) -> None:
         """Close the database connection."""
